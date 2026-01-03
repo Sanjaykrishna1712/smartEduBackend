@@ -10,3 +10,4 @@ email-validator==2.1.0
 python-dateutil==2.8.2
 gunicorn==20.1.0
 bcrypt==4.0.1
+pandas>=1.5.0
