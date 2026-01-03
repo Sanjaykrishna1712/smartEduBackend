@@ -1,0 +1,109 @@
+{
+  "content": [
+    {
+      "id": "3938aba2-a64c-4b5e-8721-52034c32375d",
+      "type": "pdf",
+      "title": "course-registration-slip-231",
+      "original_filename": "course-registration-slip-231.pdf",
+      "stored_filename": "5b6eab35-8694-4c1b-b1f8-8a4f698b8db7.pdf",
+      "file_path": "uploads/documents/pdf\\5b6eab35-8694-4c1b-b1f8-8a4f698b8db7.pdf",
+      "file_size": 18438,
+      "mime_type": "application/pdf",
+      "uploaded_at": "2025-12-29T11:31:44.509229",
+      "status": "draft",
+      "subject": "General",
+      "topic": "",
+      "folder": "Uploads",
+      "access": "private",
+      "assigned_to": [],
+      "tags": [],
+      "description": "",
+      "author": "Prof. John Smith",
+      "views": 0,
+      "downloads": 7,
+      "likes": 0,
+      "shares": 0,
+      "completion_rate": 0,
+      "file_size_formatted": "18.01 KB"
+    },
+    {
+      "id": "2208b335-8873-4295-8ef5-577bc866aaff",
+      "_id": "f3f30b5e-6599-4fda-abb0-920b518d0e4f",
+      "type": "document",
+      "title": "GIT",
+      "description": "Git commands",
+      "subject": "General",
+      "topic": "",
+      "uploaded_at": "2025-12-29T12:25:27.724043",
+      "updated_at": "2025-12-29T12:25:27.724043",
+      "status": "published",
+      "views": 0,
+      "completion_rate": 0,
+      "likes": 0,
+      "shares": 0,
+      "downloads": 0,
+      "duration": null,
+      "file_size": 0,
+      "file_size_formatted": "0 Bytes",
+      "mime_type": "text/plain",
+      "tags": [
+        "CSE"
+      ],
+      "author": "Current Teacher",
+      "access": "public",
+      "folder": "Uploads",
+      "assigned_to": [
+        "class-3"
+      ],
+      "original_filename": "GIT.txt",
+      "stored_filename": "ed8450ef-fa0a-4840-8ed9-5aa1f273281b.txt",
+      "file_path": ""
+    }
+  ],
+  "folders": [],
+  "subjects": [
+    {
+      "id": "8ad646cf-195e-46f2-ae4b-992ab6cbd1e7",
+      "name": "General",
+      "content_count": 2,
+      "color": "blue"
+    }
+  ],
+  "classes": [
+    {
+      "id": "class-1",
+      "name": "Mathematics 101",
+      "subject": "Mathematics"
+    },
+    {
+      "id": "class-2",
+      "name": "Physics 101",
+      "subject": "Physics"
+    },
+    {
+      "id": "class-3",
+      "name": "Computer Science 101",
+      "subject": "Computer Science"
+    },
+    {
+      "id": "class-4",
+      "name": "Chemistry 101",
+      "subject": "Chemistry"
+    },
+    {
+      "id": "class-5",
+      "name": "English Literature",
+      "subject": "English"
+    },
+    {
+      "id": "class-6",
+      "name": "History 101",
+      "subject": "History"
+    },
+    {
+      "id": "class-7",
+      "name": "Biology 101",
+      "subject": "Biology"
+    }
+  ]
+}

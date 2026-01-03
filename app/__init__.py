@@ -1,20 +1,24 @@
 # app/__init__.py
-from flask import Flask, request
+from datetime import timedelta
+from flask import Flask, app, request
 from flask_cors import CORS, cross_origin
 import os
 from dotenv import load_dotenv
 from pymongo import MongoClient
-
+from flask_jwt_extended import JWTManager
 load_dotenv()
 
 def create_app():
     app = Flask(__name__)
     
-    # Configuration
     app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'your-secret-key-here')
+    app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY', 'jwt-secret-key-change-in-production')
+    app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=24)
     app.config['MONGO_URI'] = os.getenv('MONGO_URI', 'mongodb://localhost:27017/')
     app.config['DATABASE_NAME'] = os.getenv('DATABASE_NAME', 'SmartEducation')
     
+    # Initialize JWT
+    jwt = JWTManager(app)
     # Get allowed origins
     allowed_origins = os.getenv('ALLOWED_ORIGINS', 'http://localhost:5173,http://localhost:3000').split(',')
     
@@ -55,8 +59,17 @@ def create_app():
     app.register_blueprint(teachers_bp, url_prefix='/api')
     from app.routes.students import students_bp
     app.register_blueprint(students_bp, url_prefix='/api')
+    from app.routes.calendar import calendar_bp
+    app.register_blueprint(calendar_bp, url_prefix='/api/calendar')
     # Debug: Print all registered routes
+    from app.routes.classes import classes_bp
+    app.register_blueprint(classes_bp, url_prefix='/api')
+    from app.routes.content import content_bp
+    app.register_blueprint(content_bp)
+    from app.routes.quiz import quiz_bp
+    app.register_blueprint(quiz_bp, url_prefix='/api')   
     print("\n📋 Registered Routes:")
+
     for rule in app.url_map.iter_rules():
         print(f"  {rule.endpoint}: {rule.rule}")
     print()

@@ -50,7 +50,207 @@ def add_cors_headers(response):
     response.headers.add("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
     response.headers.add("Access-Control-Allow-Credentials", "true")
     return response
+# In school_contact.py - Add this after imports but before routes
 
+# ==================== EMAIL CONFIGURATION FUNCTIONS ====================
+def get_approval_email_template(institution: dict, password: str, plan: str) -> tuple:
+    """Generate approval email subject and body"""
+    subject = f"Your IntelliLearn Account is Ready - {institution['school_name']}"
+    
+    body = f"""
+<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background: #f9f9f9;">
+    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
+        <h1 style="margin: 0; font-size: 28px;">🎉 Welcome to IntelliLearn!</h1>
+        <p style="margin: 10px 0 0 0; font-size: 16px; opacity: 0.9;">AI-Powered Education Platform</p>
+    </div>
+    
+    <div style="background: white; padding: 30px; border-radius: 0 0 10px 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+        <p style="font-size: 16px; line-height: 1.6; color: #333;">
+            Dear <strong>{institution['principal_name']}</strong>,
+        </p>
+        
+        <p style="font-size: 16px; line-height: 1.6; color: #333;">
+            Congratulations! Your institution <strong>{institution['school_name']}</strong> has been approved for the <strong>{plan.title()}</strong> plan.
+        </p>
+        
+        <div style="background: #f0f7ff; padding: 20px; border-radius: 8px; border-left: 4px solid #667eea; margin: 25px 0;">
+            <h3 style="color: #2c3e50; margin-top: 0;">🔐 Your Login Credentials</h3>
+            <table style="width: 100%; border-collapse: collapse;">
+                <tr>
+                    <td style="padding: 8px 0; color: #555; width: 120px;">Email:</td>
+                    <td style="padding: 8px 0; font-weight: bold; color: #333;">{institution['email']}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #555;">Password:</td>
+                    <td style="padding: 8px 0; font-weight: bold; color: #333; font-family: monospace; background: #f8f9fa; padding: 5px 10px; border-radius: 4px;">{password}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #555;">Login URL:</td>
+                    <td style="padding: 8px 0;">
+                        <a href="http://localhost:5173/login" style="color: #667eea; text-decoration: none; font-weight: bold;">
+                            http://localhost:5173/login
+                        </a>
+                    </td>
+                </tr>
+            </table>
+        </div>
+        
+        <div style="background: #fff8e1; padding: 20px; border-radius: 8px; border-left: 4px solid #ffb300; margin: 25px 0;">
+            <h3 style="color: #2c3e50; margin-top: 0;">⚠️ Important Security Notice</h3>
+            <ul style="color: #5d4037; padding-left: 20px;">
+                <li>Change your password immediately after first login</li>
+                <li>Never share your credentials with anyone</li>
+                <li>Enable two-factor authentication in account settings</li>
+                <li>Contact support if you suspect unauthorized access</li>
+            </ul>
+        </div>
+        
+        <div style="margin: 30px 0;">
+            <a href="http://localhost:5173/login" style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; font-weight: bold; text-align: center;">
+                🚀 Get Started with IntelliLearn
+            </a>
+        </div>
+        
+        <p style="font-size: 14px; color: #666; line-height: 1.6;">
+            Need help? Contact our support team at 
+            <a href="mailto:support@intellilearn.com" style="color: #667eea; text-decoration: none;">support@intellilearn.com</a>
+            or visit our <a href="https://intellilearn.com/help" style="color: #667eea; text-decoration: none;">Help Center</a>.
+        </p>
+        
+        <p style="font-size: 16px; line-height: 1.6; color: #333; margin-top: 30px;">
+            Best regards,<br>
+            <strong>The IntelliLearn Team</strong>
+        </p>
+    </div>
+    
+    <div style="text-align: center; margin-top: 20px; padding-top: 20px; border-top: 1px solid #ddd; color: #888; font-size: 12px;">
+        <p>© 2024 IntelliLearn. All rights reserved.</p>
+        <p>This is an automated message, please do not reply to this email.</p>
+    </div>
+</div>
+"""
+    
+    return subject, body
+
+def send_email_with_template(to_email: str, subject: str, html_content: str, plain_text: str = None) -> bool:
+    """Send email with HTML template"""
+    if plain_text is None:
+        # Create plain text version from HTML
+        import re
+        plain_text = re.sub('<[^<]+?>', '', html_content)
+        plain_text = re.sub('\n\s*\n', '\n\n', plain_text).strip()
+    
+    config = get_email_config()
+    
+    if not config['smtp_password']:
+        print("❌ SMTP_PASSWORD is not set in environment variables")
+        return False
+    
+    try:
+        msg = MIMEMultipart('alternative')
+        msg['From'] = f"{config['from_name']} <{config['from_email']}>"
+        msg['To'] = to_email
+        msg['Subject'] = subject
+        
+        # Add plain text version
+        msg.attach(MIMEText(plain_text, 'plain', 'utf-8'))
+        
+        # Add HTML version
+        msg.attach(MIMEText(html_content, 'html', 'utf-8'))
+        
+        # Connect to SMTP server
+        server = smtplib.SMTP(config['smtp_server'], config['smtp_port'], timeout=30)
+        server.starttls()
+        server.login(config['smtp_username'], config['smtp_password'])
+        server.send_message(msg)
+        server.quit()
+        
+        print(f"✅ Email sent successfully to {to_email}")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Email sending failed: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return False
+def get_email_config():
+    """Get email configuration from environment variables"""
+    print("🔐 SMTP_USERNAME:", os.getenv("SMTP_USERNAME"))
+    print("🔐 SMTP_PASSWORD:", "SET" if os.getenv("SMTP_PASSWORD") else "NOT SET")
+
+    return {
+        'smtp_server': os.getenv('SMTP_SERVER', 'smtp.gmail.com'),
+        'smtp_port': int(os.getenv('SMTP_PORT', 587)),
+        'smtp_username': os.getenv('SMTP_USERNAME', 'SanjayKrishna12172004@gmail.com'),
+        'smtp_password': os.getenv('SMTP_PASSWORD'),
+        'from_email': os.getenv('FROM_EMAIL', 'SanjayKrishna12172004@gmail.com'),
+        'from_name': os.getenv('FROM_NAME', 'IntelliLearn Admin')
+    }
+
+def send_email_smtp(to_email, subject, message_body):
+    """Send email using SMTP"""
+    config = get_email_config()
+    
+    # Check if password is set
+    if not config['smtp_password']:
+        print("❌ SMTP_PASSWORD is not set in environment variables")
+        return False
+    
+    try:
+        # Create message
+        msg = MIMEMultipart()
+        msg['From'] = f"{config['from_name']} <{config['from_email']}>"
+        msg['To'] = to_email
+        msg['Subject'] = subject
+        
+        # Create HTML content
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <body style="font-family: Arial, sans-serif; line-height: 1.6; padding: 20px;">
+            <div style="max-width: 600px; margin: 0 auto; background: #f9f9f9; padding: 20px; border-radius: 5px;">
+                <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; text-align: center; border-radius: 5px 5px 0 0;">
+                    <h1 style="margin: 0;">IntelliLearn</h1>
+                    <p style="margin: 5px 0 0 0;">AI-Powered Education Platform</p>
+                </div>
+                <div style="padding: 20px;">
+                    {message_body.replace('\n', '<br>')}
+                </div>
+                <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #ddd; color: #666; font-size: 12px; text-align: center;">
+                    <p>© 2024 IntelliLearn. All rights reserved.</p>
+                    <p>This is an automated message.</p>
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+        
+        # Attach HTML and plain text
+        msg.attach(MIMEText(html_content, 'html'))
+        msg.attach(MIMEText(message_body, 'plain'))
+        
+        # Connect to SMTP server
+        print(f"📧 Attempting to send email to: {to_email}")
+        print(f"📧 Using SMTP: {config['smtp_server']}:{config['smtp_port']}")
+        
+        server = smtplib.SMTP(config['smtp_server'], config['smtp_port'], timeout=30)
+        server.starttls()
+        server.login(config['smtp_username'], config['smtp_password'])
+        server.send_message(msg)
+        server.quit()
+        
+        print(f"✅ Email sent successfully to {to_email}")
+        return True
+        
+    except smtplib.SMTPAuthenticationError as e:
+        print(f"❌ SMTP Authentication failed: {str(e)}")
+        print("🔧 Make sure you're using an App Password from Google, not your regular password")
+        return False
+    except Exception as e:
+        print(f"❌ Email sending failed: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return False
 # ==================== EXISTING CONTACT FORM ENDPOINT ====================
 
 @school_contact_bp.route('/school-contact', methods=['POST', 'OPTIONS'])  # REMOVED /api prefix
@@ -83,7 +283,7 @@ def create_school_contact():
         print(f"📥 Received data keys: {list(data.keys())}")
         
         # Validate required fields
-        required_fields = ['schoolName', 'principalName', 'email', 'phone', 'schoolType']
+        required_fields = ['schoolName', 'schoolId','principalName', 'email', 'phone', 'schoolType']
         missing_fields = []
         
         for field in required_fields:
@@ -131,6 +331,7 @@ def create_school_contact():
         # Prepare document with is_active default as false
         contact_doc = {
             'school_name': data['schoolName'].strip(),
+            'school_id': data['schoolId'].strip(),
             'principal_name': data['principalName'].strip(),
             'email': email.lower().strip(),
             'phone': data['phone'].strip(),
@@ -278,12 +479,12 @@ def get_pending_contacts():
         return add_cors_headers(response), 500
 
 # Add OPTIONS method to all PUT endpoints
-@school_contact_bp.route('/admin/school-contacts/<contact_id>/approve', methods=['PUT', 'OPTIONS'])  # REMOVED /api prefix
+# In school_contact.py, update these functions:
+
+@school_contact_bp.route('/admin/school-contacts/<contact_id>/approve', methods=['PUT', 'OPTIONS'])
 def approve_contact(contact_id):
     """Approve a school contact request"""
-    # Handle preflight OPTIONS request
     if request.method == 'OPTIONS':
-        print("🔄 Handling OPTIONS preflight request for approve")
         response = make_response()
         return add_cors_headers(response)
     
@@ -295,17 +496,35 @@ def approve_contact(contact_id):
         db = get_db()
         collection = db.school_contacts
         
-        # Generate a random password (you can make this more secure)
+        # Get institution data first
+        institution = collection.find_one({'_id': ObjectId(contact_id)})
+        if not institution:
+            client.close()
+            response = jsonify({
+                'success': False,
+                'error': 'Contact not found'
+            })
+            return add_cors_headers(response), 404
+        
+        # Generate a random password
         import random
         import string
-        password = ''.join(random.choices(string.ascii_letters + string.digits + '!@#$%^&*', k=12))
+        password = ''.join(random.choices(string.ascii_letters + string.digits, k=10))
+        
+        # Hash the password for storage
+        from werkzeug.security import generate_password_hash
+        hashed_password = generate_password_hash(password)
+        
+        accepted_plan = data.get('accepted_plan', 'basic')
+        admin_notes = data.get('admin_notes', f'Approved on {datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")}')
         
         update_data = {
             'is_approved': True,
-            'is_active': True,  # Set to true when approved
-            'accepted_plan': data.get('accepted_plan', 'basic'),
-            'admin_notes': data.get('admin_notes', f'Approved on {datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")}'),
-            'initial_password': password,  # Store initial password (hashed in production)
+            'is_active': True,
+            'accepted_plan': accepted_plan,
+            'admin_notes': admin_notes,
+            'initial_password': hashed_password,
+            'initial_password_plain': password,  # Store plain text temporarily for email
             'approved_at': datetime.utcnow(),
             'updated_at': datetime.utcnow()
         }
@@ -314,6 +533,56 @@ def approve_contact(contact_id):
         result = collection.update_one(
             {'_id': ObjectId(contact_id)},
             {'$set': update_data}
+        )
+        
+        # Prepare approval email
+        email_subject = f"Welcome to IntelliLearn - Your Account is Approved!"
+        
+        email_body = f"""
+Dear {institution['principal_name']},
+
+We are delighted to inform you that your institution's application has been approved!
+
+**Institution Details:**
+- Institution Name: {institution['school_name']}
+- Approved Plan: {accepted_plan.title()}
+- Approval Date: {datetime.utcnow().strftime('%Y-%m-%d')}
+
+**Your Login Credentials:**
+- Email: {institution['email']}
+- Password: {password}
+- Login URL: http://localhost:5173/login (or your platform URL)
+
+**Important Security Notes:**
+1. Please change your password immediately after first login
+2. Never share your credentials with anyone
+3. Contact support immediately if you suspect unauthorized access
+
+**Getting Started:**
+1. Log in to your account
+2. Complete your institution profile setup
+3. Invite teachers and staff members
+4. Explore our learning resources and tools
+
+**Support Resources:**
+- Documentation: [Your Documentation URL]
+- Video Tutorials: [Your Tutorials URL]
+- Support Email: support@intellilearn.com
+- Support Phone: [Your Support Number]
+
+If you have any questions or need assistance, please don't hesitate to contact our support team.
+
+Welcome aboard!
+
+Best regards,
+The IntelliLearn Team
+"""
+        
+        # Send approval email
+        email_sent = send_email_smtp(
+            institution['email'], 
+            email_subject, 
+            email_body
         )
         
         client.close()
@@ -325,48 +594,74 @@ def approve_contact(contact_id):
             })
             return add_cors_headers(response), 404
         
-        # Return password for admin to send manually
-        response = jsonify({
+        response_data = {
             'success': True,
             'message': 'Contact approved successfully',
+            'email_sent': email_sent,
             'data': {
                 'contact_id': contact_id,
-                'password': password,  # In production, this should be sent via email, not returned
-                'plan': data.get('accepted_plan', 'basic')
+                'email': institution['email'],
+                'plan': accepted_plan
             }
-        })
+        }
+        
+        if not email_sent:
+            response_data['warning'] = 'Approval processed but email failed to send. Please contact the institution manually.'
+            response_data['manual_password'] = password  # Include password if email failed
+        
+        response = jsonify(response_data)
         return add_cors_headers(response), 200
         
     except Exception as e:
         print(f"Error approving contact: {str(e)}")
+        import traceback
+        traceback.print_exc()
         response = jsonify({
             'success': False,
-            'error': 'Internal server error'
+            'error': f'Internal server error: {str(e)}'
         })
         return add_cors_headers(response), 500
 
-@school_contact_bp.route('/admin/school-contacts/<contact_id>/reject', methods=['PUT', 'OPTIONS'])  # REMOVED /api prefix
+@school_contact_bp.route('/admin/school-contacts/<contact_id>/reject', methods=['PUT', 'OPTIONS'])
 def reject_contact(contact_id):
     """Reject a school contact request"""
-    # Handle preflight OPTIONS request
     if request.method == 'OPTIONS':
-        print("🔄 Handling OPTIONS preflight request for reject")
         response = make_response()
         return add_cors_headers(response)
     
     try:
         data = request.get_json()
+        rejection_reason = data.get('rejection_reason', '')
+        
+        if not rejection_reason:
+            response = jsonify({
+                'success': False,
+                'error': 'Rejection reason is required'
+            })
+            return add_cors_headers(response), 400
         
         # Connect to MongoDB
         client = get_mongo_client()
         db = get_db()
         collection = db.school_contacts
         
+        # Get institution data
+        institution = collection.find_one({'_id': ObjectId(contact_id)})
+        if not institution:
+            client.close()
+            response = jsonify({
+                'success': False,
+                'error': 'Contact not found'
+            })
+            return add_cors_headers(response), 404
+        
+        admin_notes = data.get('admin_notes', f'Rejected on {datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")}: {rejection_reason}')
+        
         update_data = {
             'is_approved': False,
-            'is_active': False,  # Keep as false for rejected
-            'rejection_reason': data.get('rejection_reason', ''),
-            'admin_notes': data.get('admin_notes', f'Rejected on {datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")}'),
+            'is_active': False,
+            'rejection_reason': rejection_reason,
+            'admin_notes': admin_notes,
             'rejected_at': datetime.utcnow(),
             'updated_at': datetime.utcnow()
         }
@@ -375,6 +670,49 @@ def reject_contact(contact_id):
         result = collection.update_one(
             {'_id': ObjectId(contact_id)},
             {'$set': update_data}
+        )
+        
+        # Prepare rejection email
+        email_subject = f"Update on Your IntelliLearn Application - {institution['school_name']}"
+        
+        email_body = f"""
+Dear {institution['principal_name']},
+
+Thank you for your interest in IntelliLearn. After careful review of your application, we regret to inform you that we are unable to approve your institution's request at this time.
+
+**Application Details:**
+- Institution: {institution['school_name']}
+- Application Date: {institution.get('created_at', datetime.utcnow()).strftime('%Y-%m-%d') if hasattr(institution.get('created_at'), 'strftime') else 'N/A'}
+
+**Reason for Rejection:**
+{rejection_reason}
+
+**What You Can Do Next:**
+1. You may reapply in 60-90 days after addressing the concerns mentioned above
+2. Consider exploring our alternative solutions that might better fit your needs
+3. Contact our admissions team for a consultation to understand requirements better
+
+**Alternative Options:**
+- Basic Free Plan: Limited features for small institutions
+- Partner Programs: Collaborate with existing IntelliLearn institutions
+- Pilot Program: Limited-time trial access (subject to availability)
+
+**Questions or Clarifications:**
+If you have questions about this decision or need clarification on the rejection reasons, please contact our admissions team:
+- Email: admissions@intellilearn.com
+- Phone: [Your Admissions Phone Number]
+
+We appreciate your interest in IntelliLearn and hope to serve your educational needs in the future.
+
+Sincerely,
+IntelliLearn Admissions Team
+"""
+        
+        # Send rejection email
+        email_sent = send_email_smtp(
+            institution['email'], 
+            email_subject, 
+            email_body
         )
         
         client.close()
@@ -386,17 +724,25 @@ def reject_contact(contact_id):
             })
             return add_cors_headers(response), 404
         
-        response = jsonify({
+        response_data = {
             'success': True,
-            'message': 'Contact rejected successfully'
-        })
+            'message': 'Contact rejected successfully',
+            'email_sent': email_sent
+        }
+        
+        if not email_sent:
+            response_data['warning'] = 'Rejection processed but email failed to send. Please contact the institution manually.'
+        
+        response = jsonify(response_data)
         return add_cors_headers(response), 200
         
     except Exception as e:
         print(f"Error rejecting contact: {str(e)}")
+        import traceback
+        traceback.print_exc()
         response = jsonify({
             'success': False,
-            'error': 'Internal server error'
+            'error': f'Internal server error: {str(e)}'
         })
         return add_cors_headers(response), 500
 
@@ -573,23 +919,6 @@ def send_email():
     try:
         data = request.get_json()
         
-        # Get email configuration from environment variables
-        smtp_server = os.getenv('SMTP_SERVER', 'smtp.gmail.com')
-        smtp_port = int(os.getenv('SMTP_PORT', 587))
-        smtp_username = os.getenv('SMTP_USERNAME')
-        smtp_password = os.getenv('SMTP_PASSWORD')
-        from_email = os.getenv('FROM_EMAIL')
-        from_name = os.getenv('FROM_NAME', 'IntelliLearn Admin')
-        
-        # Validate required configuration
-        if not all([smtp_server, smtp_username, smtp_password, from_email]):
-            print("❌ SMTP configuration is incomplete")
-            response = jsonify({
-                'success': False,
-                'error': 'Email server configuration is incomplete'
-            })
-            return add_cors_headers(response), 500
-        
         # Get email data
         to_email = data.get('to_email')
         subject = data.get('subject')
@@ -599,116 +928,46 @@ def send_email():
             print("❌ Missing email data")
             response = jsonify({
                 'success': False,
-                'error': 'Missing required email fields'
+                'error': 'Missing required email fields: to_email, subject, message'
             })
             return add_cors_headers(response), 400
         
-        print(f"📧 Preparing to send email to: {to_email}")
+        print(f"📧 Sending email to: {to_email}")
         print(f"📧 Subject: {subject}")
         
-        # Create message
-        msg = MIMEMultipart()
-        msg['From'] = f"{from_name} <{from_email}>"
-        msg['To'] = to_email
-        msg['Subject'] = subject
+        # Use the centralized email sending function
+        success = send_email_smtp(to_email, subject, message_body)
         
-        # Add HTML and plain text versions
-        html_content = f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <style>
-                body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
-                .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
-                .header {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }}
-                .content {{ background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }}
-                .footer {{ text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid #eee; color: #666; font-size: 12px; }}
-                .button {{ display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; margin: 20px 0; }}
-                .logo {{ font-size: 24px; font-weight: bold; margin-bottom: 10px; }}
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <div class="header">
-                    <div class="logo">IntelliLearn</div>
-                    <div>AI-Powered Education Platform</div>
-                </div>
-                <div class="content">
-                    {message_body.replace('\n', '<br>')}
-                    <br><br>
-                    <div class="footer">
-                        <p>© 2024 IntelliLearn. All rights reserved.</p>
-                        <p>This is an automated message, please do not reply to this email.</p>
-                        <p>Need help? Contact our support team at support@intellilearn.com</p>
-                    </div>
-                </div>
-            </div>
-        </body>
-        </html>
-        """
-        
-        # Add HTML version
-        msg.attach(MIMEText(html_content, 'html'))
-        
-        # Add plain text version as alternative
-        plain_text = message_body
-        msg.attach(MIMEText(plain_text, 'plain'))
-        
-        # Send email
-        try:
-            # Connect to SMTP server
-            server = smtplib.SMTP(smtp_server, smtp_port)
-            server.starttls()  # Upgrade to secure connection
-            server.login(smtp_username, smtp_password)
-            
-            # Send email
-            server.send_message(msg)
-            server.quit()
-            
-            print(f"✅ Email successfully sent to {to_email}")
-            
-            # Log the email in database (optional)
-            client = get_mongo_client()
-            db = get_db()
-            collection = db.email_logs  # Create this collection if it doesn't exist
-            
-            email_log = {
-                'to_email': to_email,
-                'subject': subject,
-                'message': message_body,
-                'sent_at': datetime.utcnow(),
-                'status': 'sent'
-            }
-            collection.insert_one(email_log)
-            client.close()
+        if success:
+            # Log the email in database
+            try:
+                client = get_mongo_client()
+                db = get_db()
+                collection = db.email_logs
+                
+                email_log = {
+                    'to_email': to_email,
+                    'subject': subject,
+                    'message': message_body,
+                    'sent_at': datetime.utcnow(),
+                    'status': 'sent'
+                }
+                collection.insert_one(email_log)
+                client.close()
+                print(f"📝 Email logged in database for {to_email}")
+            except Exception as e:
+                print(f"⚠️ Could not log email to database: {str(e)}")
+                # Continue even if logging fails
             
             response = jsonify({
                 'success': True,
                 'message': 'Email sent successfully'
             })
             return add_cors_headers(response), 200
-            
-        except smtplib.SMTPAuthenticationError:
-            print("❌ SMTP authentication failed")
+        else:
             response = jsonify({
                 'success': False,
-                'error': 'Email server authentication failed. Check your credentials.'
-            })
-            return add_cors_headers(response), 500
-            
-        except smtplib.SMTPException as e:
-            print(f"❌ SMTP error: {str(e)}")
-            response = jsonify({
-                'success': False,
-                'error': f'Failed to send email: {str(e)}'
-            })
-            return add_cors_headers(response), 500
-            
-        except Exception as e:
-            print(f"❌ Email sending error: {str(e)}")
-            response = jsonify({
-                'success': False,
-                'error': f'Failed to send email: {str(e)}'
+                'error': 'Failed to send email. Check server configuration and logs.'
             })
             return add_cors_headers(response), 500
             
