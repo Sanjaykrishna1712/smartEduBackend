@@ -344,11 +344,11 @@ def add_student():
         return add_cors_headers(response)
     
     try:
-        print("🟢 POST /api/students route called!")
-        print(f"📦 Request headers: {dict(request.headers)}")
+        print("POST /api/students route called!")
+        print(f"Request headers: {dict(request.headers)}")
 
         data = request.get_json()
-        print(f"📦 Raw request data: {data}")
+        print(f"Raw request data: {data}")
 
         if not data:
             print("❌ No data provided")
