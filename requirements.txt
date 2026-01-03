@@ -9,3 +9,4 @@ flask-limiter==3.10.0  # Updated to a version that exists
 email-validator==2.1.0
 python-dateutil==2.8.2
 flask-limiter==3.3.3
+gunicorn==20.1.0
