@@ -5,8 +5,7 @@ PyJWT==2.8.0
 pymongo==4.6.0
 python-dotenv==1.0.0
 Werkzeug==3.0.1
-flask-limiter==3.10.0  # Updated to a version that exists
+flask-limiter==3.10.0
 email-validator==2.1.0
 python-dateutil==2.8.2
-flask-limiter==3.3.3
 gunicorn==20.1.0
