@@ -20,7 +20,7 @@ def create_app():
     # Initialize JWT
     jwt = JWTManager(app)
     # Get allowed origins
-    allowed_origins = os.getenv('ALLOWED_ORIGINS', 'http://localhost:5173,http://localhost:3000').split(',')
+    allowed_origins = os.getenv('ALLOWED_ORIGINS' https://smartedufrontend.onrender.com).split(',')
     
     print(f"✅ Allowed CORS origins: {allowed_origins}")
     
