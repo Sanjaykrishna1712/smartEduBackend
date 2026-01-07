@@ -9,7 +9,7 @@ class Config:
     MONGO_URI = os.getenv('MONGO_URI', 'mongodb://localhost:27017/')
     DATABASE_NAME = os.getenv('DATABASE_NAME', 'SmartEducation')
     # config.py - Update the default origins
-ALLOWED_ORIGINS = os.getenv('ALLOWED_ORIGINS', 'http://localhost:5173').split(',')
+ALLOWED_ORIGINS = os.getenv('ALLOWED_ORIGINS', 'https://smartedufrontend.onrender.com').split(',')
     RATELIMIT_DEFAULT = "200 per day, 50 per hour"
     RATELIMIT_STORAGE_URL = "memory://"
     
