@@ -41,7 +41,7 @@ def serialize_document(doc):
 
 def add_cors_headers(response):
     """Add CORS headers to response"""
-    response.headers.add("Access-Control-Allow-Origin", "http://localhost:5173")
+    response.headers.add("Access-Control-Allow-Origin", "https://smartedufrontend.onrender.com")
     response.headers.add("Access-Control-Allow-Headers", "Content-Type,Authorization")
     response.headers.add("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
     response.headers.add("Access-Control-Allow-Credentials", "true")
