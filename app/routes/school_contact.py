@@ -44,7 +44,7 @@ def serialize_document(doc):
 # In school_contact.py
 def add_cors_headers(response):
     """Add CORS headers to response"""
-    origin = request.headers.get('Origin', 'http://localhost:5173')
+    origin = request.headers.get('Origin', 'https://smartedufrontend.onrender.com')
     response.headers.add("Access-Control-Allow-Origin", origin)
     response.headers.add("Access-Control-Allow-Headers", "Content-Type,Authorization")
     response.headers.add("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
@@ -87,8 +87,8 @@ def get_approval_email_template(institution: dict, password: str, plan: str) -> 
                 <tr>
                     <td style="padding: 8px 0; color: #555;">Login URL:</td>
                     <td style="padding: 8px 0;">
-                        <a href="http://localhost:5173/login" style="color: #667eea; text-decoration: none; font-weight: bold;">
-                            http://localhost:5173/login
+                        <a href="https://smartedufrontend.onrender.com/login" style="color: #667eea; text-decoration: none; font-weight: bold;">
+                            https://smartedufrontend.onrender.com/login
                         </a>
                     </td>
                 </tr>
@@ -106,7 +106,7 @@ def get_approval_email_template(institution: dict, password: str, plan: str) -> 
         </div>
         
         <div style="margin: 30px 0;">
-            <a href="http://localhost:5173/login" style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; font-weight: bold; text-align: center;">
+            <a href="https://smartedufrontend.onrender.com/login" style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; font-weight: bold; text-align: center;">
                 🚀 Get Started with IntelliLearn
             </a>
         </div>
@@ -551,7 +551,7 @@ We are delighted to inform you that your institution's application has been appr
 **Your Login Credentials:**
 - Email: {institution['email']}
 - Password: {password}
-- Login URL: http://localhost:5173/login (or your platform URL)
+- Login URL: https://smartedufrontend.onrender.com/login (or your platform URL)
 
 **Important Security Notes:**
 1. Please change your password immediately after first login
