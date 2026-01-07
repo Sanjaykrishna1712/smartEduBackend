@@ -347,7 +347,7 @@ def create_calendar_event():
 
 # PUT: Update an event
 @calendar_bp.route('/events/<event_id>', methods=['PUT', 'OPTIONS'])
-@cross_origin(origins="http://localhost:5173")
+@cross_origin(origins="https://smartedufrontend.onrender.com")
 def update_event(event_id):
 
     try:
