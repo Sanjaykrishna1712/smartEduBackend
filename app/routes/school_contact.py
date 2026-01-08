@@ -491,7 +491,7 @@ def approve_contact(contact_id):
     try:
         data = request.get_json()
         
-        # Connect to MongoDB
+        # Connect to MongoDBa
         client = get_mongo_client()
         db = get_db()
         collection = db.school_contacts
