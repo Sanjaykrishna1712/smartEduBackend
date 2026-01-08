@@ -55,7 +55,24 @@ UPLOAD_SUBDIRS = {
     'presentation': 'presentations',
     'spreadsheet': 'spreadsheets'
 }
+# In your content.py or a separate middleware file
 
+def get_school_id_from_token():
+    """Extract school_id from JWT token"""
+    # This is a placeholder - implement based on your JWT structure
+    auth_header = request.headers.get('Authorization')
+    if auth_header:
+        try:
+            token = auth_header.split(' ')[1]
+            # Decode JWT token to get user info
+            # This depends on how you structure your JWT tokens
+            # decoded = jwt.decode(token, current_app.config['JWT_SECRET_KEY'], algorithms=['HS256'])
+            # return decoded.get('school_id')
+        except:
+            pass
+    return None
+
+# Then modify your routes to use this middleware
 def ensure_upload_dirs():
     """Create all upload directories if they don't exist"""
     print(f"\n🔧 Ensuring upload directories exist...")
@@ -112,7 +129,7 @@ def get_content_collections():
     except Exception as e:
         print(f"Error getting collections: {e}")
         # Fallback to direct connection if needed
-        client = MongoClient('mongodb://localhost:27017/')
+        client = MongoClient('mongodb+srv://ayushinnovations1642_db_user:T4ZBxVmMYdCMdlCF@cluster0.z7ft0uk.mongodb.net/SmartEducation?retryWrites=true&w=majority')
         db = client['resources']
         return {
             'resources': db.resources,
@@ -236,6 +253,16 @@ def upload_content():
     if len(files) == 0:
         return jsonify({'error': 'No files selected'}), 400
     
+    # Get school_id from form data
+    school_id = request.form.get('school_id')
+    print(f"🏫 School ID from request: {school_id}")
+    
+    # If no school_id in form, try to get from authorization header
+    if not school_id:
+        # You might want to decode JWT token to get school_id
+        # For now, we'll log a warning
+        print("⚠️ No school_id in form data")
+    
     collections = get_content_collections()
     resources = collections['resources']
     uploaded_content = []
@@ -280,6 +307,9 @@ def upload_content():
             # Get file size
             file_size = os.path.getsize(file_path)
             
+            # Get author from form or default
+            author = form_data.get('author', 'Unknown Teacher')
+            
             # Create content record in MongoDB
             content_data = {
                 'type': content_type,
@@ -290,7 +320,8 @@ def upload_content():
                 'folder': form_data.get('folder', 'Uploads'),
                 'status': form_data.get('status', 'draft'),
                 'access': form_data.get('access', 'private'),
-                'author': form_data.get('author', 'Teacher'),
+                'author': author,
+                'school_id': school_id,  # ADD THIS: Store school_id
                 'original_filename': original_filename,
                 'stored_filename': unique_filename,
                 'file_path': file_path,  # Store absolute path
@@ -314,7 +345,7 @@ def upload_content():
             content_data['id'] = str(result.inserted_id)
 
             uploaded_content.append(prepare_content_for_response(content_data))
-            print(f"✅ Added content to MongoDB: {content_data['title']}")
+            print(f"✅ Added content to MongoDB with school_id: {school_id}")
         else:
             print(f"❌ File not allowed: {file.filename}")
             return jsonify({'error': f'File type not allowed: {file.filename}'}), 400
@@ -341,6 +372,9 @@ def get_all_content():
     sort_by = request.args.get('sort_by', 'uploaded_at')
     sort_order = request.args.get('sort_order', 'desc')
     
+    # ADD THIS: Get school_id from query params or authorization
+    school_id = request.args.get('school_id', None)
+    
     collections = get_content_collections()
     resources = collections['resources']
     
@@ -361,6 +395,11 @@ def get_all_content():
     
     if class_id != 'all':
         query['assigned_to'] = class_id
+    
+    # ADD THIS: Filter by school_id if provided
+    if school_id:
+        query['school_id'] = school_id
+        print(f"🏫 Filtering by school_id: {school_id}")
     
     if search:
         query['$or'] = [
@@ -934,6 +973,7 @@ def create_content():
         'access': data.get('access', 'private'),
         'folder': data.get('folder', 'Drafts'),
         'assigned_to': data.get('assigned_to', []),
+        'school_id': data.get('school_id'),  # ADD THIS: Store school_id
         'original_filename': f"{data.get('title')}.txt",
         'stored_filename': f"{uuid.uuid4()}.txt",
         'file_path': '',
@@ -947,6 +987,7 @@ def create_content():
     content_data['file_size_formatted'] = format_file_size(content_data['file_size'])
     
     return jsonify(content_data), 201
+
 
 @content_bp.route('/init', methods=['POST', 'OPTIONS'])
 @cross_origin()
