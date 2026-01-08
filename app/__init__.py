@@ -1,18 +1,16 @@
 # app/__init__.py
 from datetime import timedelta
-from flask import Flask, request
-from flask_cors import CORS
+from flask import Flask, app, request
+from flask_cors import CORS, cross_origin
 import os
 from dotenv import load_dotenv
 from pymongo import MongoClient
 from flask_jwt_extended import JWTManager
-
 load_dotenv()
 
 def create_app():
     app = Flask(__name__)
     
-    # App configurations
     app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'your-secret-key-here')
     app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY', 'jwt-secret-key-change-in-production')
     app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=24)
@@ -21,24 +19,16 @@ def create_app():
     
     # Initialize JWT
     jwt = JWTManager(app)
+    # Get allowed origins
+    allowed_origins = os.getenv('ALLOWED_ORIGINS', 'https://smartedufrontend.onrender.com')
     
-    # Allowed origins for CORS (default to your deployed frontend URL)
-    allowed_origins = os.getenv('ALLOWED_ORIGINS', 'https://smartedufrontend.onrender.com').split(',')
     print(f"✅ Allowed CORS origins: {allowed_origins}")
     
-    # Initialize CORS only for API endpoints
-    CORS(app, 
-         resources={
-             r"/api/*": {
-                 "origins": allowed_origins,
-                 "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-                 "allow_headers": ["Content-Type", "Authorization", "Accept"],
-                 "supports_credentials": True
-             }
-         }
-    )
+    # Initialize CORS
+    CORS(app, origins=allowed_origins, supports_credentials=True)
+
     
-    # Initialize MongoDB connection
+    # Initialize MongoDB
     try:
         client = MongoClient(app.config['MONGO_URI'])
         app.db = client[app.config['DATABASE_NAME']]
@@ -51,32 +41,33 @@ def create_app():
     try:
         from app.routes.school_contact import school_contact_bp
     except ImportError:
+        # Alternative import path
         from .routes.school_contact import school_contact_bp
-    app.register_blueprint(school_contact_bp, url_prefix='/api')
     
+    app.register_blueprint(school_contact_bp, url_prefix='/api')
     from app.routes.login import login_bp
     app.register_blueprint(login_bp, url_prefix='/api')
-    
     from app.routes.teachers import teachers_bp
     app.register_blueprint(teachers_bp, url_prefix='/api')
-    
     from app.routes.students import students_bp
     app.register_blueprint(students_bp, url_prefix='/api')
-    
+    from app.routes.studentpage import studentpage_bp
+    app.register_blueprint(studentpage_bp,url_prefix='/api/student')
     from app.routes.calendar import calendar_bp
     app.register_blueprint(calendar_bp, url_prefix='/api/calendar')
-    
+    # Debug: Print all registered routes
     from app.routes.classes import classes_bp
-    app.register_blueprint(classes_bp, url_prefix='/api')
-    
+    app.register_blueprint(classes_bp, url_prefix='')
     from app.routes.content import content_bp
-    app.register_blueprint(content_bp)
-    
+    app.register_blueprint(content_bp, url_prefix="/api/content")
+    from app.routes.studentquiz import studentquiz_bp
+    app.register_blueprint(studentquiz_bp, url_prefix='/api')
     from app.routes.quiz import quiz_bp
-    app.register_blueprint(quiz_bp, url_prefix='/api')
-    
-    # Debug: print all registered routes
+    app.register_blueprint(quiz_bp, url_prefix='/api')  
+    from app.routes.chat import chat_bp
+    app.register_blueprint(chat_bp, url_prefix='/api/chat')  
     print("\n📋 Registered Routes:")
+
     for rule in app.url_map.iter_rules():
         print(f"  {rule.endpoint}: {rule.rule}")
     print()
