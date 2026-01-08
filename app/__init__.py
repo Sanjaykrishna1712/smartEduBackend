@@ -64,8 +64,6 @@ def create_app():
     app.register_blueprint(studentquiz_bp, url_prefix='/api')
     from app.routes.quiz import quiz_bp
     app.register_blueprint(quiz_bp, url_prefix='/api')  
-    from app.routes.chat import chat_bp
-    app.register_blueprint(chat_bp, url_prefix='/api/chat')  
     print("\n📋 Registered Routes:")
 
     for rule in app.url_map.iter_rules():
