@@ -554,11 +554,11 @@ def register_teacher():
                     </div>
                     
                     <div style="text-align: center;">
-                        <a href="http://localhost:5173/login" class="login-btn">
+                        <a href="https://smartedufrontend.onrender.com/login" class="login-btn">
                             Click Here to Login
                         </a>
                         <p style="font-size: 14px; color: #666; margin-top: 10px;">
-                            Or visit: http://localhost:5173/login
+                            Or visit: https://smartedufrontend.onrender.com/login
                         </p>
                     </div>
                     
@@ -628,7 +628,7 @@ def register_teacher():
                 'temp_password': temp_password,
                 'email_sent': email_sent,
                 'email_error': email_error,
-                'login_url': 'http://localhost:5173/login',
+                'login_url': 'https://smartedufrontend.onrender.com/login',
                 'instructions': 'Please share these credentials with the teacher.' + 
                                (' Email was sent successfully.' if email_sent else 
                                 ' Email failed to send. Please share credentials manually.')
