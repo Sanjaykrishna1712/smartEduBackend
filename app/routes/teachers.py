@@ -284,21 +284,17 @@ def allowed_file(filename):
 
 # ==================== TEACHER REGISTRATION/ADDITION ====================
 
+# ==================== TEACHER REGISTRATION/ADDITION WITH EMAIL ====================
+
 @teachers_bp.route('/teachers/register', methods=['POST', 'OPTIONS'])
 def register_teacher():
-    """Register a new teacher (Admin/Principal only)"""
+    """Register a new teacher (Admin/Principal only) WITH EMAIL"""
     
     # Handle OPTIONS preflight request
     if request.method == 'OPTIONS':
-        return jsonify({'success': True}), 200  # Simple response
+        return jsonify({'success': True}), 200
     
     try:
-        # Get token from header for authentication
-        token = None
-        auth_header = request.headers.get('Authorization')
-        if auth_header and auth_header.startswith('Bearer '):
-            token = auth_header.split(' ')[1]
-        
         # Get JSON data
         data = request.get_json()
         
@@ -341,7 +337,7 @@ def register_teacher():
             }), 400
         
         # Generate employee ID
-        school_code = 'SCH'  # Default school code for testing
+        school_code = 'SCH'  # Default school code
         teacher_count = db.teachers.count_documents({})
         employee_id = generate_employee_id(school_code, teacher_count + 1)
         
@@ -360,16 +356,19 @@ def register_teacher():
                     'error': 'Invalid date format. Use YYYY-MM-DD'
                 }), 400
         
+        # Get school_id from data or use default
+        school_id = data.get('school_id', 'test_school_id')
+        
         # Prepare teacher document
         teacher_doc = {
             'employee_id': employee_id,
-            'school_id': data.get('school_id', 'test_school_id'),  # Fixed: get school_id from data
+            'school_id': school_id,
             'school_code': school_code,
-            'school_name': 'Test School',
+            'school_name': data.get('school_name', 'IntelliLearn School'),
             'name': data['name'].strip(),
             'email': email,
             'phone': data.get('phone', '').strip(),
-            'password': hashed_password,
+            'password': temp_password,
             'subject': data['subject'].strip(),
             'classes': data.get('classes', []),
             'status': data.get('status', 'active'),
@@ -395,7 +394,229 @@ def register_teacher():
         
         client.close()
         
-        # Create response
+        # ============ SEND EMAIL TO TEACHER ============
+        email_sent = False
+        email_error = None
+        
+        try:
+            # Get email configuration from environment variables
+            SMTP_SERVER = os.getenv('SMTP_SERVER', 'smtp.gmail.com')
+            SMTP_PORT = int(os.getenv('SMTP_PORT', 587))
+            SMTP_USERNAME = os.getenv('SMTP_USERNAME')
+            SMTP_PASSWORD = os.getenv('SMTP_PASSWORD')
+            FROM_EMAIL = os.getenv('FROM_EMAIL', 'SanjayKrishna12172004@gmail.com')
+            FROM_NAME = os.getenv('FROM_NAME', 'IntelliLearn Admin')
+            
+            print(f"📧 Attempting to send email to {email}")
+            print(f"📧 Using SMTP: {SMTP_SERVER}:{SMTP_PORT}")
+            print(f"📧 Username: {SMTP_USERNAME}")
+            print(f"📧 Password configured: {'Yes' if SMTP_PASSWORD else 'No'}")
+            
+            # Validate email configuration
+            if not SMTP_USERNAME or not SMTP_PASSWORD:
+                raise Exception("SMTP username or password not configured in environment variables")
+            
+            # Create email
+            msg = MIMEMultipart()
+            msg['From'] = f"{FROM_NAME} <{FROM_EMAIL}>"
+            msg['To'] = email
+            msg['Subject'] = 'Welcome to IntelliLearn - Your Teacher Account Details'
+            
+            # HTML Email template
+            html = f"""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>Welcome to IntelliLearn</title>
+                <style>
+                    body {{
+                        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                        line-height: 1.6;
+                        color: #333;
+                        max-width: 600px;
+                        margin: 0 auto;
+                        padding: 20px;
+                        background-color: #f9f9f9;
+                    }}
+                    .header {{
+                        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                        padding: 30px;
+                        text-align: center;
+                        border-radius: 10px 10px 0 0;
+                        color: white;
+                    }}
+                    .content {{
+                        background-color: white;
+                        padding: 30px;
+                        border-radius: 0 0 10px 10px;
+                        border: 1px solid #e0e0e0;
+                    }}
+                    .credentials {{
+                        background-color: #f8f9fa;
+                        border-left: 4px solid #007bff;
+                        padding: 20px;
+                        margin: 20px 0;
+                        border-radius: 5px;
+                    }}
+                    .warning {{
+                        background-color: #fff3cd;
+                        border-left: 4px solid #ffc107;
+                        padding: 15px;
+                        margin: 20px 0;
+                        border-radius: 5px;
+                        color: #856404;
+                    }}
+                    .login-btn {{
+                        display: inline-block;
+                        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                        color: white;
+                        padding: 12px 30px;
+                        text-decoration: none;
+                        border-radius: 25px;
+                        font-weight: bold;
+                        margin: 20px 0;
+                    }}
+                    table {{
+                        width: 100%;
+                        border-collapse: collapse;
+                        margin: 15px 0;
+                    }}
+                    table td {{
+                        padding: 10px;
+                        border-bottom: 1px solid #eee;
+                    }}
+                    table td:first-child {{
+                        font-weight: bold;
+                        color: #555;
+                        width: 40%;
+                    }}
+                    .footer {{
+                        text-align: center;
+                        margin-top: 30px;
+                        padding-top: 20px;
+                        border-top: 1px solid #eee;
+                        color: #666;
+                        font-size: 12px;
+                    }}
+                </style>
+            </head>
+            <body>
+                <div class="header">
+                    <h1 style="margin: 0; font-size: 24px;">Welcome to IntelliLearn!</h1>
+                    <p style="margin: 10px 0 0 0; opacity: 0.9;">Your AI-Powered School Management System</p>
+                </div>
+                
+                <div class="content">
+                    <p style="font-size: 16px;">Dear <strong>{data['name'].strip()}</strong>,</p>
+                    
+                    <p>Your teacher account has been successfully created on the IntelliLearn platform. Below are your login credentials:</p>
+                    
+                    <div class="credentials">
+                        <h3 style="margin-top: 0; color: #007bff;">Your Account Details</h3>
+                        <table>
+                            <tr>
+                                <td>Employee ID:</td>
+                                <td><strong>{employee_id}</strong></td>
+                            </tr>
+                            <tr>
+                                <td>Email Address:</td>
+                                <td>{email}</td>
+                            </tr>
+                            <tr>
+                                <td>Temporary Password:</td>
+                                <td style="color: #dc3545; font-weight: bold; font-size: 18px;">{temp_password}</td>
+                            </tr>
+                            <tr>
+                                <td>Subject:</td>
+                                <td>{data['subject'].strip()}</td>
+                            </tr>
+                            <tr>
+                                <td>Designation:</td>
+                                <td>{data.get('designation', 'Teacher')}</td>
+                            </tr>
+                            <tr>
+                                <td>School:</td>
+                                <td>{data.get('school_name', 'IntelliLearn School')}</td>
+                            </tr>
+                        </table>
+                    </div>
+                    
+                    <div class="warning">
+                        <h4 style="margin-top: 0;">⚠️ Important Security Notice:</h4>
+                        <ul style="margin: 10px 0; padding-left: 20px;">
+                            <li>This is a <strong>temporary password</strong></li>
+                            <li>Please change your password immediately after first login</li>
+                            <li>Never share your password with anyone</li>
+                            <li>For security, this temporary password expires in 7 days</li>
+                        </ul>
+                    </div>
+                    
+                    <div style="text-align: center;">
+                        <a href="http://localhost:5173/login" class="login-btn">
+                            Click Here to Login
+                        </a>
+                        <p style="font-size: 14px; color: #666; margin-top: 10px;">
+                            Or visit: http://localhost:5173/login
+                        </p>
+                    </div>
+                    
+                    <p style="font-size: 14px; color: #777;">
+                        If you have any questions or need assistance, please contact the school administration or 
+                        reply to this email.
+                    </p>
+                </div>
+                
+                <div class="footer">
+                    <p>
+                        This is an automated message. Please do not reply directly to this email.<br>
+                        &copy; {datetime.now().year} IntelliLearn. All rights reserved.<br>
+                        <small>IntelliLearn - AI-Powered School Management System</small>
+                    </p>
+                </div>
+            </body>
+            </html>
+            """
+            
+            msg.attach(MIMEText(html, 'html'))
+            
+            # Connect to SMTP server with timeout
+            print(f"🔗 Connecting to SMTP server: {SMTP_SERVER}:{SMTP_PORT}")
+            server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=10)
+            server.set_debuglevel(1)  # Enable debug output
+            
+            print("🔐 Starting TLS...")
+            server.starttls()
+            
+            print(f"🔑 Logging in as: {SMTP_USERNAME}")
+            server.login(SMTP_USERNAME, SMTP_PASSWORD)
+            
+            print(f"📤 Sending email to: {email}")
+            server.send_message(msg)
+            
+            print("✅ Email sent successfully")
+            server.quit()
+            
+            email_sent = True
+            print(f"✅ Email sent successfully to {email}")
+            
+        except smtplib.SMTPAuthenticationError as auth_error:
+            email_error = f"SMTP Authentication failed: {str(auth_error)}"
+            print(f"❌ Authentication failed: {auth_error}")
+            print("ℹ️ Please check your Gmail App Password")
+            
+        except smtplib.SMTPException as smtp_error:
+            email_error = f"SMTP Error: {str(smtp_error)}"
+            print(f"❌ SMTP Error: {smtp_error}")
+            
+        except Exception as e:
+            email_error = f"Email sending failed: {str(e)}"
+            print(f"❌ Email error: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        # ============ CREATE RESPONSE ============
         response_data = {
             'success': True,
             'message': 'Teacher registered successfully',
@@ -404,7 +625,13 @@ def register_teacher():
                 'employee_id': employee_id,
                 'name': teacher_doc['name'],
                 'email': email,
-                'temp_password': temp_password  # Only for admin, not for production
+                'temp_password': temp_password,
+                'email_sent': email_sent,
+                'email_error': email_error,
+                'login_url': 'http://localhost:5173/login',
+                'instructions': 'Please share these credentials with the teacher.' + 
+                               (' Email was sent successfully.' if email_sent else 
+                                ' Email failed to send. Please share credentials manually.')
             }
         }
         
