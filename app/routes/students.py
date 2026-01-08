@@ -83,7 +83,7 @@ def serialize_document(doc):
 
 def add_cors_headers(response):
     """Add CORS headers to response"""
-    response.headers.add("Access-Control-Allow-Origin", "https://smartedufrontend.onrender.com")
+    response.headers.add("Access-Control-Allow-Origin", "http://localhost:5173")
     response.headers.add("Access-Control-Allow-Headers", "Content-Type,Authorization,X-Requested-With")
     response.headers.add("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
     response.headers.add("Access-Control-Allow-Credentials", "true")
@@ -149,7 +149,7 @@ def send_welcome_email(student_email, student_name, student_id, password, school
                     
                     <p class="important">Important: Please change your password after your first login.</p>
                     
-                    <p>You can access your account at: <a href="https://smartedufrontend.onrender.com/login">School Portal</a></p>
+                    <p>You can access your account at: <a href="http://localhost:5173/login">School Portal</a></p>
                     
                     <p>If you have any questions or need assistance, please contact the school administration.</p>
                     
@@ -338,142 +338,83 @@ def get_all_students():
 
 @students_bp.route('/students', methods=['POST', 'OPTIONS'])
 def add_student():
-    """Add a single student (No School Validation)"""
     if request.method == 'OPTIONS':
         response = make_response()
         return add_cors_headers(response)
-    
+
     try:
-        print("POST /api/students route called!")
-        print(f"Request headers: {dict(request.headers)}")
-
         data = request.get_json()
-        print(f"Raw request data: {data}")
-
         if not data:
-            print("❌ No data provided")
-            return jsonify({
-                'success': False,
-                'error': 'No data provided'
-            }), 400
+            return jsonify({'success': False, 'error': 'No data provided'}), 400
 
-        print(f"📥 Add student request received with data")
-
-        # Get school_id if provided (optional now)
-        school_id = data.get('school_id', '').strip()
-        if not school_id:
-            school_id = get_school_id_from_request()
-
-        print(f"🏫 School ID from request: {school_id if school_id else 'NO SCHOOL ID USED'}")
-
-        # Validate required fields
+        # Required fields
         required_fields = ['name', 'email', 'class', 'section']
-        missing_fields = [field for field in required_fields if field not in data or not str(data[field]).strip()]
+        missing = [f for f in required_fields if not data.get(f)]
+        if missing:
+            return jsonify({'success': False, 'error': f"Missing fields: {', '.join(missing)}"}), 400
 
-        if missing_fields:
-            print(f"❌ Missing fields: {missing_fields}")
-            return jsonify({
-                'success': False,
-                'error': f'Missing required fields: {", ".join(missing_fields)}'
-            }), 400
-
-        # Validate email
         email = data['email'].strip().lower()
         if not validate_email(email):
-            print(f"❌ Invalid email: {email}")
-            return jsonify({
-                'success': False,
-                'error': 'Invalid email format'
-            }), 400
+            return jsonify({'success': False, 'error': 'Invalid email format'}), 400
 
-        print(f"✅ All validations passed for {email}")
-
-        # Connect to DB
         client = get_mongo_client()
         db = get_db()
 
-        # Check duplicate email ONLY by email (not school specific now)
-        existing_student = db.students.find_one({'email': email})
-        if existing_student:
+        # Global email uniqueness
+        if db.students.find_one({'email': email}):
             client.close()
-            print(f"❌ Email already exists globally: {email}")
-            return jsonify({
-                'success': False,
-                'error': 'Email already registered'
-            }), 400
+            return jsonify({'success': False, 'error': 'Email already registered'}), 400
 
-        # No school lookup anymore
+        school_id = data.get('school_id', '') or get_school_id_from_request()
         school_name = "Default School"
         school_code = "SCH"
 
-        # Generate student ID and password
         student_id = generate_student_id(school_code)
         password = generate_password()
 
-        print(f"🎫 Generated student ID: {student_id}")
-
-        # Prepare student document
         student_doc = {
             'student_id': student_id,
             'name': data['name'].strip(),
             'email': email,
-            'phone': data.get('phone', '').strip(),
+            'phone': data.get('phone', ''),
             'roll_number': data.get('roll_number', student_id),
             'class': str(data['class']).strip(),
             'section': str(data['section']).strip().upper(),
-            'date_of_birth': data.get('date_of_birth', ''),
-            'gender': data.get('gender', '').lower(),
-            'address': data.get('address', ''),
-            'parent_name': data.get('parent_name', ''),
-            'parent_phone': data.get('parent_phone', ''),
-            'parent_email': data.get('parent_email', ''),
-            'parent_occupation': data.get('parent_occupation', ''),
-            'blood_group': data.get('blood_group', '').upper(),
-            'medical_conditions': data.get('medical_conditions', ''),
-            'admission_date': data.get('admission_date', datetime.utcnow().strftime('%Y-%m-%d')),
-            'attendance': float(data.get('attendance', 0)),
-            'performance': float(data.get('performance', 0)),
             'status': data.get('status', 'active'),
             'initial_password': password,
-            'school_id': school_id if school_id else "",
+            'school_id': school_id,
             'school_name': school_name,
-            'created_by': 'admin',
             'created_at': datetime.utcnow(),
             'updated_at': datetime.utcnow()
         }
 
-        print(f"💾 Inserting student document...")
         result = db.students.insert_one(student_doc)
+        client.close()
 
-        # Remove sensitive fields before response
+        # 🔔 SEND EMAIL (Safe)
+        try:
+            send_welcome_email(
+                student_email=email,
+                student_name=data['name'],
+                student_id=student_id,
+                password=password,
+                school_name=school_name
+            )
+        except Exception as e:
+            print(f"📧 Email failed for {email}: {e}")
+
         student_doc.pop('initial_password', None)
         student_doc['_id'] = str(result.inserted_id)
 
-        client.close()
-
-        response_data = {
+        return add_cors_headers(jsonify({
             'success': True,
-            'message': 'Student added successfully',
-            'data': student_doc,
-            'credentials': {
-                'student_id': student_id,
-                'password': password
-            }
-        }
-
-        print(f"✅ Student added: {student_id}")
-        response = jsonify(response_data)
-        return add_cors_headers(response), 201
+            'message': 'Student added & email sent',
+            'data': student_doc
+        })), 201
 
     except Exception as e:
-        print(f"❌ Error adding student: {str(e)}")
-        import traceback
-        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
 
-        return jsonify({
-            'success': False,
-            'error': f'Failed to add student: {str(e)}'
-        }), 500
 
 
 # ==================== GET STUDENT BY ID ====================
@@ -696,90 +637,50 @@ def delete_student(student_id):
         }), 500
 
 # ==================== BULK IMPORT STUDENTS ====================
-# ==================== BULK IMPORT STUDENTS (NO SCHOOL CHECK) ====================
 @students_bp.route('/students/bulk-import', methods=['POST', 'OPTIONS'])
 def bulk_import_students():
-    """Bulk import students WITHOUT school validation"""
     if request.method == 'OPTIONS':
         response = make_response()
         return add_cors_headers(response)
 
     try:
-        print("📤 Starting bulk import...")
-
-        # school_id OPTIONAL now
-        school_id = request.form.get('school_id', '').strip()
-        if school_id:
-            print(f"🏫 Using school_id: {school_id}")
-        else:
-            print("🏫 No school_id provided")
-
-        # Check file
         if 'file' not in request.files:
             return jsonify({'success': False, 'error': 'No file uploaded'}), 400
 
         file = request.files['file']
-
-        if file.filename == '':
-            return jsonify({'success': False, 'error': 'No file selected'}), 400
-
         if not allowed_file(file.filename):
-            return jsonify({
-                'success': False,
-                'error': 'File type not allowed. Upload .xlsx, .xls or .csv'
-            }), 400
+            return jsonify({'success': False, 'error': 'Invalid file type'}), 400
 
-        # Save temp file
         filename = secure_filename(file.filename)
         filepath = os.path.join(UPLOAD_FOLDER, filename)
         file.save(filepath)
 
-        # Read file
-        try:
-            if filename.endswith('.csv'):
-                df = pd.read_csv(filepath)
-            else:
-                df = pd.read_excel(filepath)
-        except Exception as e:
-            os.remove(filepath)
-            return jsonify({'success': False, 'error': f'Failed to read file: {str(e)}'}), 400
-
-        print(f"📊 File read successfully. Shape: {df.shape}")
-
+        df = pd.read_csv(filepath) if filename.endswith('.csv') else pd.read_excel(filepath)
         df.columns = df.columns.str.strip().str.lower()
 
-        required_columns = ['name', 'email', 'class', 'section']
-        missing_columns = [c for c in required_columns if c not in df.columns]
-
-        if missing_columns:
+        required = ['name', 'email', 'class', 'section']
+        if any(col not in df.columns for col in required):
             os.remove(filepath)
-            return jsonify({
-                'success': False,
-                'error': f'Missing required columns: {', '.join(missing_columns)}'
-            }), 400
+            return jsonify({'success': False, 'error': 'Missing required columns'}), 400
 
         client = get_mongo_client()
         db = get_db()
 
-        success_count = 0
-        error_count = 0
+        success, failed = 0, 0
         errors = []
 
+        school_id = request.form.get('school_id', '')
         school_name = "Default School"
         school_code = "SCH"
 
-        for index, row in df.iterrows():
+        for idx, row in df.iterrows():
             try:
-                if pd.isna(row['name']) or pd.isna(row['email']):
-                    continue
-
                 email = str(row['email']).strip().lower()
                 name = str(row['name']).strip()
 
-                # Check duplicate globally (NOT school based now)
                 if db.students.find_one({'email': email}):
-                    errors.append(f"Row {index+2}: Email already exists {email}")
-                    error_count += 1
+                    failed += 1
+                    errors.append(f"Row {idx+2}: Email exists")
                     continue
 
                 student_id = generate_student_id(school_code)
@@ -789,55 +690,52 @@ def bulk_import_students():
                     'student_id': student_id,
                     'name': name,
                     'email': email,
-                    'phone': str(row.get('phone', '')).strip(),
-                    'roll_number': str(row.get('roll_number', student_id)).strip(),
-                    'class': str(row['class']).strip(),
-                    'section': str(row['section']).strip().upper(),
-                    'date_of_birth': str(row.get('date_of_birth', '')),
-                    'gender': str(row.get('gender', '')).strip().lower(),
-                    'address': str(row.get('address', '')).strip(),
-                    'parent_name': str(row.get('parent_name', '')).strip(),
-                    'parent_phone': str(row.get('parent_phone', '')).strip(),
-                    'parent_email': str(row.get('parent_email', '')).strip(),
-                    'parent_occupation': str(row.get('parent_occupation', '')).strip(),
-                    'blood_group': str(row.get('blood_group', '')).strip().upper(),
-                    'medical_conditions': str(row.get('medical_conditions', '')).strip(),
-                    'admission_date': str(row.get('admission_date', datetime.utcnow().strftime('%Y-%m-%d'))),
-                    'attendance': float(row.get('attendance', 0)),
-                    'performance': float(row.get('performance', 0)),
-                    'status': str(row.get('status', 'active')).lower(),
+                    'class': str(row['class']),
+                    'section': str(row['section']).upper(),
+                    'status': 'active',
                     'initial_password': password,
-                    'school_id': school_id if school_id else "",
+                    'school_id': school_id,
                     'school_name': school_name,
-                    'created_by': 'admin',
                     'created_at': datetime.utcnow(),
                     'updated_at': datetime.utcnow()
                 }
 
                 db.students.insert_one(student_doc)
-                success_count += 1
-                print(f"✅ Imported Row {index+1}: {name}")
+
+                # 🔔 SEND EMAIL (Safe)
+                try:
+                    send_welcome_email(
+                        student_email=email,
+                        student_name=name,
+                        student_id=student_id,
+                        password=password,
+                        school_name=school_name
+                    )
+                except Exception as e:
+                    print(f"📧 Email failed for {email}: {e}")
+
+                success += 1
 
             except Exception as e:
-                errors.append(f"Row {index+2}: {str(e)}")
-                error_count += 1
+                failed += 1
+                errors.append(f"Row {idx+2}: {str(e)}")
 
         os.remove(filepath)
         client.close()
 
         return jsonify({
             'success': True,
-            'message': f'Import completed. Success: {success_count}, Failed: {error_count}',
+            'message': 'Bulk import completed',
             'data': {
-                'success_count': success_count,
-                'error_count': error_count,
+                'success_count': success,
+                'failed_count': failed,
                 'errors': errors[:10]
             }
         }), 200
 
     except Exception as e:
-        print(f"❌ Bulk import error: {str(e)}")
-        return jsonify({'success': False, 'error': f'Failed: {str(e)}'}), 500
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 
 
 # ==================== BULK DELETE STUDENTS ====================
