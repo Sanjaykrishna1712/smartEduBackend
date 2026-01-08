@@ -83,7 +83,7 @@ def serialize_document(doc):
 
 def add_cors_headers(response):
     """Add CORS headers to response"""
-    response.headers.add("Access-Control-Allow-Origin", "http://localhost:5173")
+    response.headers.add("Access-Control-Allow-Origin", "https://smartedufrontend.onrender.com")
     response.headers.add("Access-Control-Allow-Headers", "Content-Type,Authorization,X-Requested-With")
     response.headers.add("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
     response.headers.add("Access-Control-Allow-Credentials", "true")
@@ -149,7 +149,7 @@ def send_welcome_email(student_email, student_name, student_id, password, school
                     
                     <p class="important">Important: Please change your password after your first login.</p>
                     
-                    <p>You can access your account at: <a href="http://localhost:5173/login">School Portal</a></p>
+                    <p>You can access your account at: <a href="https://smartedufrontend.onrender.com/login">School Portal</a></p>
                     
                     <p>If you have any questions or need assistance, please contact the school administration.</p>
                     
