@@ -1,10 +1,35 @@
+# app/routes/quiz_routes.py
 from flask import Blueprint, request, jsonify, current_app
-import json
-from datetime import datetime,timedelta 
+from datetime import datetime, timedelta
 from bson import ObjectId
-import uuid
+import jwt
+import math
+from functools import wraps
+# Add this import at the top
+from flask import make_response
 
 quiz_bp = Blueprint('quiz', __name__)
+# Add this helper function
+def add_cors_headers(response):
+    """Add CORS headers to response"""
+    response.headers['Access-Control-Allow-Origin'] = 'https://smartedufrontend.onrender.com'
+    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With'
+    response.headers['Access-Control-Allow-Credentials'] = 'true'
+    return response
+
+# Add OPTIONS method handler for preflight requests
+@quiz_bp.route('/quizzes', methods=['OPTIONS'])
+def handle_options():
+    """Handle CORS preflight requests"""
+    response = make_response()
+    response.headers['Access-Control-Allow-Origin'] = 'https://smartedufrontend.onrender.com'
+    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With'
+    response.headers['Access-Control-Allow-Credentials'] = 'true'
+    response.headers['Access-Control-Max-Age'] = '3600'
+    return response
+# Create blueprint
 
 # Helper function to validate JSON fields
 def validate_required_fields(data, required_fields):
@@ -14,27 +39,148 @@ def validate_required_fields(data, required_fields):
             missing_fields.append(field)
     return missing_fields
 
-# REMOVED: get_current_user_id function since we're not using JWT
-# For now, we'll use a dummy user ID or get it from request
-def get_current_user_id():
-    # For development/testing, use a dummy user ID
-    # In production, you should implement proper authentication
-    return "dummy_user_id"  # TODO: Replace with actual user ID from session or auth
+# Helper to get school_id from request (same as your students.py)
+def get_school_id_from_request():
+    """Extract school_id from request with multiple fallbacks"""
+    school_id = None
+    
+    # 1. Check Authorization header first
+    auth_header = request.headers.get('Authorization')
+    if auth_header and auth_header.startswith('Bearer '):
+        token = auth_header.split(' ')[1]
+        try:
+            jwt_secret = current_app.config.get('JWT_SECRET_KEY', 'your-secret-key-change-in-production')
+            
+            # 👇 ADD DEBUG
+            print(f"🔐 [get_school_id] Token check, first 20 chars: {token[:20]}...")
+            
+            payload = jwt.decode(token, jwt_secret, algorithms=['HS256'])
+            school_id = payload.get('school_id', '').strip()
+            print(f"✅ [get_school_id] School ID from token: '{school_id}'")
+        except jwt.InvalidTokenError as e:
+            print(f"❌ [get_school_id] JWT decode failed: {str(e)}")
+        except Exception as e:
+            print(f"❌ [get_school_id] Unexpected error: {str(e)}")
+    
+    # 2. Check query parameter
+    if not school_id:
+        school_id = request.args.get('school_id', '').strip()
+        if school_id:
+            print(f"📋 [get_school_id] Using school_id from query param: '{school_id}'")
+    
+    # 3. Check JSON body
+    if not school_id and request.method in ['POST', 'PUT', 'DELETE']:
+        try:
+            data = request.get_json(silent=True) or {}
+            school_id = data.get('school_id', '').strip()
+            if school_id:
+                print(f"📋 [get_school_id] Using school_id from JSON body: '{school_id}'")
+        except:
+            pass
+    
+    return school_id
 
-# Question Bank Routes - REMOVED @jwt_required()
+def get_current_user_id():
+    """Get current user ID from JWT token"""
+    auth_header = request.headers.get('Authorization')
+    if auth_header and auth_header.startswith('Bearer '):
+        token = auth_header.split(' ')[1]
+        try:
+            jwt_secret = current_app.config.get('JWT_SECRET_KEY', 'your-secret-key-change-in-production')
+            payload = jwt.decode(token, jwt_secret, algorithms=['HS256'])
+            
+            # 👇 ADD THESE DEBUG LINES
+            print("🔐 JWT Token Payload:", payload)
+            print("🔍 Looking for user_id:", payload.get('user_id'))
+            print("🔍 Looking for id:", payload.get('id'))
+            
+            return payload.get('user_id') or payload.get('id')
+        except Exception as e:
+            print("❌ JWT Decode Error:", str(e))
+            pass
+    return None
+
+def get_user_role():
+    """Get user role from JWT token"""
+    auth_header = request.headers.get('Authorization')
+    if auth_header and auth_header.startswith('Bearer '):
+        token = auth_header.split(' ')[1]
+        try:
+            jwt_secret = current_app.config.get('JWT_SECRET_KEY', 'your-secret-key-change-in-production')
+            payload = jwt.decode(token, jwt_secret, algorithms=['HS256'])
+            return payload.get('role')
+        except:
+            pass
+    return None
+
+def get_user_class():
+    """Get user class from JWT token (for students)"""
+    auth_header = request.headers.get('Authorization')
+    if auth_header and auth_header.startswith('Bearer '):
+        token = auth_header.split(' ')[1]
+        try:
+            jwt_secret = current_app.config.get('JWT_SECRET_KEY', 'your-secret-key-change-in-production')
+            
+            # 👇 ADD DEBUG: Print token info (first 20 chars)
+            print(f"🔐 Token first 20 chars: {token[:20]}...")
+            print(f"🔐 JWT Secret configured: {jwt_secret[:10]}..." if jwt_secret else "❌ No JWT secret!")
+            
+            payload = jwt.decode(token, jwt_secret, algorithms=['HS256'])
+            
+            print(f"🔍 JWT Payload decoded: {payload}")
+            
+            class_value = payload.get('class')
+            
+            if class_value is None:
+                print("⚠️ 'class' field not found in JWT payload")
+                return None
+            
+            if isinstance(class_value, str) and class_value.strip() == '':
+                print("⚠️ 'class' field is empty string")
+                return None
+            
+            print(f"✅ Found class in token: {class_value}")
+            return class_value
+            
+        except jwt.ExpiredSignatureError:
+            print("❌ JWT token has expired")
+            return None
+        except jwt.InvalidTokenError as e:
+            print(f"❌ Invalid JWT token: {str(e)}")
+            return None
+        except Exception as e:
+            print(f"❌ Unexpected error decoding JWT: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return None
+    else:
+        print("⚠️ No Authorization header found")
+    return None
+# ==================== QUESTION BANK ROUTES ====================
+
 @quiz_bp.route('/question-bank', methods=['GET'])
-def get_question_bank():  # REMOVED: @jwt_required()
-    """Get all questions from question bank with filters"""
+def get_question_bank():
+    """Get all questions from question bank with school_id filtering"""
     try:
+        # Get school_id
+        school_id = get_school_id_from_request()
+        if not school_id:
+            return jsonify({'error': 'School ID is required'}), 400
+        
         # Get query parameters
         subject = request.args.get('subject', '')
         topic = request.args.get('topic', '')
         difficulty = request.args.get('difficulty', '')
+        question_type = request.args.get('question_type', '')
         search = request.args.get('search', '')
+        question_class = request.args.get('class', '')
+        page = int(request.args.get('page', 1))
+        limit = int(request.args.get('limit', 50))
         
-        # Build query - using dummy user for now
-        query = {'created_by': get_current_user_id(), 'is_reusable': True}
+        # Build query - filter by school_id
+        query = {'school_id': school_id}
         
+        # Apply filters
         if subject:
             query['subject'] = subject
         
@@ -44,9 +190,31 @@ def get_question_bank():  # REMOVED: @jwt_required()
         if difficulty:
             query['difficulty'] = difficulty
         
+        if question_type:
+            query['question_type'] = question_type
+        
+        if question_class:
+            query['class'] = question_class
+        
+        if search:
+            query['$or'] = [
+                {'question_text': {'$regex': search, '$options': 'i'}},
+                {'topic': {'$regex': search, '$options': 'i'}},
+                {'tags': {'$regex': search, '$options': 'i'}}
+            ]
+        
+        print(f"📋 Question bank query for school {school_id}: {query}")
+        
         # Get questions from MongoDB
         db = current_app.db
-        questions_cursor = db.question_bank.find(query).sort('updated_at', -1)
+        total = db.question_bank.count_documents(query)
+        skip = (page - 1) * limit
+        
+        questions_cursor = db.question_bank.find(query)\
+            .sort('updated_at', -1)\
+            .skip(skip)\
+            .limit(limit)
+        
         questions = list(questions_cursor)
         
         # Convert ObjectId to string
@@ -56,12 +224,14 @@ def get_question_bank():  # REMOVED: @jwt_required()
             del q['_id']
             question_list.append(q)
         
-        # Get unique subjects, topics and difficulties for filtering
-        subjects = db.question_bank.distinct('subject', {'created_by': get_current_user_id()})
-        topics = db.question_bank.distinct('topic', {'created_by': get_current_user_id()})
-        difficulties = db.question_bank.distinct('difficulty', {'created_by': get_current_user_id()})
+        # Get unique values for filtering from same school
+        subjects = db.question_bank.distinct('subject', {'school_id': school_id})
+        topics = db.question_bank.distinct('topic', {'school_id': school_id})
+        difficulties = db.question_bank.distinct('difficulty', {'school_id': school_id})
+        classes = db.question_bank.distinct('class', {'school_id': school_id})
+        question_types = db.question_bank.distinct('question_type', {'school_id': school_id})
         
-        # Get all tags
+        # Get all tags from same school
         all_tags = set()
         for q in questions:
             if 'tags' in q and q['tags']:
@@ -72,27 +242,37 @@ def get_question_bank():  # REMOVED: @jwt_required()
             'subjects': subjects,
             'topics': topics,
             'difficulties': list(difficulties),
+            'classes': [c for c in classes if c],
+            'question_types': question_types,
             'tags': list(all_tags),
-            'total': len(question_list)
+            'total': total,
+            'page': page,
+            'limit': limit,
+            'pages': math.ceil(total / limit) if limit > 0 else 1
         }), 200
         
     except Exception as e:
         current_app.logger.error(f"Error fetching question bank: {str(e)}")
-        return jsonify({'error': 'Failed to fetch question bank'}), 500
+        return jsonify({'error': f'Failed to fetch question bank: {str(e)}'}), 500
 
 @quiz_bp.route('/question-bank/filters', methods=['GET'])
-def get_question_bank_filters():  # REMOVED: @jwt_required()
+def get_question_bank_filters():
     """Get available filters for question bank"""
     try:
+        # Get school_id
+        school_id = get_school_id_from_request()
+        if not school_id:
+            return jsonify({'error': 'School ID is required'}), 400
+        
         db = current_app.db
-        user_id = get_current_user_id()
         
-        # Get unique values from MongoDB
-        subjects = db.question_bank.distinct('subject', {'created_by': user_id})
-        topics = db.question_bank.distinct('topic', {'created_by': user_id})
+        # Get unique values from MongoDB for this school
+        subjects = db.question_bank.distinct('subject', {'school_id': school_id})
+        topics = db.question_bank.distinct('topic', {'school_id': school_id})
+        classes = db.question_bank.distinct('class', {'school_id': school_id})
         
-        # Get all tags
-        questions = list(db.question_bank.find({'created_by': user_id}))
+        # Get all tags from this school
+        questions = list(db.question_bank.find({'school_id': school_id}))
         all_tags = set()
         for q in questions:
             if 'tags' in q and q['tags']:
@@ -106,6 +286,7 @@ def get_question_bank_filters():  # REMOVED: @jwt_required()
             'topics': topics,
             'question_types': question_types,
             'difficulties': difficulties,
+            'classes': [c for c in classes if c],
             'tags': list(all_tags)
         }), 200
         
@@ -114,9 +295,16 @@ def get_question_bank_filters():  # REMOVED: @jwt_required()
         return jsonify({'error': 'Failed to fetch filters'}), 500
 
 @quiz_bp.route('/question-bank', methods=['POST'])
-def add_to_question_bank():  # REMOVED: @jwt_required()
+def add_to_question_bank():
     """Add a new question to the question bank"""
     try:
+        # Get school_id and user_id
+        school_id = get_school_id_from_request()
+        user_id = get_current_user_id()
+        
+        if not school_id:
+            return jsonify({'error': 'School ID is required'}), 400
+        
         # Check if request has JSON
         if not request.is_json:
             return jsonify({'error': 'Missing JSON in request'}), 400
@@ -126,23 +314,21 @@ def add_to_question_bank():  # REMOVED: @jwt_required()
             return jsonify({'error': 'No data provided'}), 400
         
         # Validate required fields
-        required_fields = ['question_text', 'question_type', 'subject', 'topic', 'correct_answer', 'points']
+        required_fields = ['question_text', 'question_type', 'subject', 'topic', 'correct_answer', 'points', 'class']
         missing_fields = validate_required_fields(data, required_fields)
         if missing_fields:
             return jsonify({'error': f'Missing required fields: {", ".join(missing_fields)}'}), 400
         
-        user_id = get_current_user_id()
-        
-        # Check for duplicate question
+        # Check for duplicate question within same school
         db = current_app.db
         existing_question = db.question_bank.find_one({
             'question_text': data['question_text'].strip(),
             'subject': data['subject'],
-            'created_by': user_id
+            'school_id': school_id
         })
         
         if existing_question:
-            return jsonify({'error': 'This question already exists in your question bank'}), 409
+            return jsonify({'error': 'This question already exists in your school\'s question bank'}), 409
         
         # Create new question document
         question_doc = {
@@ -156,7 +342,9 @@ def add_to_question_bank():  # REMOVED: @jwt_required()
             'difficulty': data.get('difficulty', 'medium'),
             'time_estimate': data.get('time_estimate', 2),
             'tags': data.get('tags', []),
-            'created_by': user_id,
+            'class': data['class'],
+            'created_by': user_id or 'unknown',
+            'school_id': school_id,
             'is_reusable': True,
             'created_at': datetime.utcnow(),
             'updated_at': datetime.utcnow()
@@ -182,18 +370,34 @@ def add_to_question_bank():  # REMOVED: @jwt_required()
         current_app.logger.error(f"Error adding to question bank: {str(e)}")
         return jsonify({'error': f'Failed to add question to bank: {str(e)}'}), 500
 
-# Quiz Routes - REMOVED @jwt_required()
+# ==================== QUIZ ROUTES ====================
+
 @quiz_bp.route('/quizzes', methods=['GET'])
-def get_quizzes():  # REMOVED: @jwt_required()
-    """Get all quizzes for the current teacher with search and filter"""
+def get_quizzes():
+    """Get all quizzes for the current teacher with school_id filtering"""
     try:
+        # Get school_id and user info
+        school_id = get_school_id_from_request()
+        user_id = get_current_user_id()
+        user_role = get_user_role()
+        
+        if not school_id:
+            return jsonify({'error': 'School ID is required'}), 400
+        
         # Get query parameters
         search = request.args.get('search', '')
         status = request.args.get('status', '')
         subject = request.args.get('subject', '')
+        quiz_class = request.args.get('class', '')
+        page = int(request.args.get('page', 1))
+        limit = int(request.args.get('limit', 20))
         
-        # Build query
-        query = {'teacher_id': get_current_user_id()}
+        # Build query - filter by school_id
+        query = {'school_id': school_id}
+        
+        # Teachers can only see their own quizzes
+        if user_role == 'teacher' and user_id:
+            query['teacher_id'] = user_id
         
         if status:
             query['status'] = status
@@ -201,9 +405,28 @@ def get_quizzes():  # REMOVED: @jwt_required()
         if subject:
             query['subject'] = subject
         
+        if quiz_class:
+            query['class'] = quiz_class
+        
+        if search:
+            query['$or'] = [
+                {'title': {'$regex': search, '$options': 'i'}},
+                {'description': {'$regex': search, '$options': 'i'}},
+                {'subject': {'$regex': search, '$options': 'i'}}
+            ]
+        
+        print(f"📋 Quizzes query for school {school_id}: {query}")
+        
         # Get quizzes from MongoDB
         db = current_app.db
-        quizzes_cursor = db.quizzes.find(query).sort('updated_at', -1)
+        total = db.quizzes.count_documents(query)
+        skip = (page - 1) * limit
+        
+        quizzes_cursor = db.quizzes.find(query)\
+            .sort('updated_at', -1)\
+            .skip(skip)\
+            .limit(limit)
+        
         quizzes = list(quizzes_cursor)
         
         # Convert ObjectId to string
@@ -221,72 +444,137 @@ def get_quizzes():  # REMOVED: @jwt_required()
             
             quiz_list.append(quiz)
         
-        # Get unique subjects for filter
-        subjects = db.quizzes.distinct('subject', {'teacher_id': get_current_user_id()})
+        # Get unique subjects for filter from same school
+        subjects = db.quizzes.distinct('subject', {'school_id': school_id})
+        classes = db.quizzes.distinct('class', {'school_id': school_id})
         
         return jsonify({
             'quizzes': quiz_list,
             'subjects': subjects,
-            'total': len(quiz_list)
+            'classes': [c for c in classes if c],
+            'total': total,
+            'page': page,
+            'limit': limit,
+            'pages': math.ceil(total / limit) if limit > 0 else 1
         }), 200
         
     except Exception as e:
         current_app.logger.error(f"Error fetching quizzes: {str(e)}")
-        return jsonify({'error': 'Failed to fetch quizzes'}), 500
+        return jsonify({'error': f'Failed to fetch quizzes: {str(e)}'}), 500
 
 @quiz_bp.route('/quizzes', methods=['POST'])
-def create_quiz():  # REMOVED: @jwt_required()
+def create_quiz():
     """Create a new quiz from selected questions"""
     try:
+        print("🔧 CREATE QUIZ - Request received")
+        print(f"🔧 Headers: {dict(request.headers)}")
+        
+        # Debug: Check Authorization header
+        auth_header = request.headers.get('Authorization')
+        print(f"🔧 Authorization Header: {auth_header}")
+        
+        # Get school_id and user_id
+        school_id = get_school_id_from_request()
+        user_id = get_current_user_id()
+        
+        print(f"🔧 School ID: {school_id}")
+        print(f"🔧 User ID: {user_id}")
+        
+        # TEMPORARY FIX: If no user_id from token, try to get from body
+        if not user_id:
+            print("⚠️ No user_id from token, checking request body...")
+            try:
+                data = request.get_json(silent=True) or {}
+                user_id = data.get('teacher_id') or data.get('user_id')
+                print(f"⚠️ User ID from body: {user_id}")
+            except:
+                pass
+        
+        # Validation
+        if not school_id:
+            print("❌ School ID missing")
+            response = jsonify({'error': 'School ID is required'})
+            return add_cors_headers(response), 400
+        
+        if not user_id:
+            print("❌ User ID missing - authentication failed")
+            response = jsonify({'error': 'User authentication required'})
+            return add_cors_headers(response), 401
+        
+        # Parse request data
         if not request.is_json:
-            return jsonify({'error': 'Missing JSON in request'}), 400
+            print("❌ Request is not JSON")
+            response = jsonify({'error': 'Missing JSON in request'})
+            return add_cors_headers(response), 400
             
         data = request.get_json()
         if not data:
-            return jsonify({'error': 'No data provided'}), 400
+            print("❌ No data provided")
+            response = jsonify({'error': 'No data provided'})
+            return add_cors_headers(response), 400
+        
+        print(f"🔧 Request data keys: {list(data.keys())}")
+        print(f"🔧 Questions count: {len(data.get('questions', []))}")
         
         # Validate required fields
-        required_fields = ['title', 'subject', 'questions']
+        required_fields = ['title', 'subject', 'class', 'questions']
         missing_fields = validate_required_fields(data, required_fields)
         if missing_fields:
-            return jsonify({'error': f'Missing required fields: {", ".join(missing_fields)}'}), 400
+            print(f"❌ Missing fields: {missing_fields}")
+            response = jsonify({'error': f'Missing required fields: {", ".join(missing_fields)}'})
+            return add_cors_headers(response), 400
         
-        user_id = get_current_user_id()
+        print(f"🔧 Quiz Title: {data['title']}")
+        print(f"🔧 Subject: {data['subject']}")
+        print(f"🔧 Class: {data['class']}")
         
         # Check for duplicate quiz title
         db = current_app.db
         existing_quiz = db.quizzes.find_one({
             'title': data['title'].strip(),
-            'teacher_id': user_id
+            'teacher_id': user_id,
+            'school_id': school_id
         })
         
         if existing_quiz:
-            return jsonify({'error': 'A quiz with this title already exists'}), 409
+            print(f"❌ Duplicate quiz: {data['title']}")
+            response = jsonify({'error': 'A quiz with this title already exists in your school'})
+            return add_cors_headers(response), 409
         
-        # Verify all questions exist and belong to teacher
-        question_bank_ids = [ObjectId(q['question_bank_id']) for q in data['questions'] if 'question_bank_id' in q]
+        # Verify all questions exist
+        question_bank_ids = []
+        for q in data['questions']:
+            if 'question_bank_id' in q and ObjectId.is_valid(q['question_bank_id']):
+                question_bank_ids.append(ObjectId(q['question_bank_id']))
+        
         if question_bank_ids:
+            print(f"🔧 Question IDs: {[str(id) for id in question_bank_ids]}")
+            
             question_count = db.question_bank.count_documents({
                 '_id': {'$in': question_bank_ids},
-                'created_by': user_id
+                'school_id': school_id
             })
             
+            print(f"🔧 Questions Found: {question_count}/{len(question_bank_ids)}")
+            
             if question_count != len(question_bank_ids):
-                return jsonify({'error': 'One or more questions not found or unauthorized'}), 400
+                print("❌ Some questions not found or unauthorized")
+                response = jsonify({'error': 'One or more questions not found or unauthorized'})
+                return add_cors_headers(response), 400
         
-        # Create quiz questions from question bank
+        # Create quiz questions
         questions = []
         total_points = 0
         
         for index, question_data in enumerate(data['questions'], 1):
-            if 'question_bank_id' in question_data:
-                # Get question from question bank
+            if 'question_bank_id' in question_data and ObjectId.is_valid(question_data['question_bank_id']):
                 question_bank = db.question_bank.find_one({
                     '_id': ObjectId(question_data['question_bank_id']),
-                    'created_by': user_id
+                    'school_id': school_id
                 })
                 
                 if not question_bank:
+                    print(f"⚠️ Question {question_data['question_bank_id']} not found")
                     continue
                 
                 question = {
@@ -300,39 +588,49 @@ def create_quiz():  # REMOVED: @jwt_required()
                     'difficulty': question_bank.get('difficulty', 'medium'),
                     'subject': question_bank['subject'],
                     'topic': question_bank['topic'],
+                    'class': question_bank.get('class', ''),
                     'time_estimate': question_bank.get('time_estimate', 2),
                     'tags': question_bank.get('tags', []),
                     'order_index': index
                 }
+                print(f"🔧 Q{index} from bank: {question_bank['question_text'][:50]}...")
             else:
-                # Add new question directly
                 question = {
-                    'question_text': question_data['question_text'].strip(),
-                    'question_type': question_data['question_type'],
-                    'correct_answer': question_data['correct_answer'],
+                    'question_text': question_data.get('question_text', '').strip(),
+                    'question_type': question_data.get('question_type', 'multiple_choice'),
+                    'correct_answer': question_data.get('correct_answer', ''),
                     'explanation': question_data.get('explanation', '').strip(),
-                    'points': int(question_data['points']),
+                    'points': int(question_data.get('points', 1)),
                     'difficulty': question_data.get('difficulty', 'medium'),
                     'subject': data['subject'],
                     'topic': question_data.get('topic', 'General').strip(),
+                    'class': data.get('class', ''),
                     'time_estimate': question_data.get('time_estimate', 2),
                     'tags': question_data.get('tags', []),
                     'order_index': index
                 }
                 
-                if question_data['question_type'] == 'multiple_choice':
+                if question['question_type'] == 'multiple_choice':
                     if 'options' in question_data and isinstance(question_data['options'], list):
                         question['options'] = question_data['options']
+                
+                print(f"🔧 Q{index} new: {question['question_text'][:50]}...")
             
-            total_points += question['points']
+            total_points += question.get('points', 0)
             questions.append(question)
+        
+        print(f"🔧 Total Points: {total_points}")
+        print(f"🔧 Questions Count: {len(questions)}")
         
         # Create quiz document
         quiz_doc = {
             'title': data['title'].strip(),
             'subject': data['subject'],
             'description': data.get('description', '').strip(),
+            'class': data['class'],
             'teacher_id': user_id,
+            'teacher_name': data.get('teacher_name', 'Teacher'),
+            'school_id': school_id,
             'time_limit': int(data.get('time_limit', 60)),
             'status': data.get('status', 'draft'),
             'total_points': total_points,
@@ -341,320 +639,81 @@ def create_quiz():  # REMOVED: @jwt_required()
             'updated_at': datetime.utcnow()
         }
         
+        print(f"🔧 Quiz Document: Title={quiz_doc['title']}, Teacher={quiz_doc['teacher_id']}, Questions={len(quiz_doc['questions'])}")
+        
         # Insert into MongoDB
         result = db.quizzes.insert_one(quiz_doc)
         quiz_doc['id'] = str(result.inserted_id)
         del quiz_doc['_id']
         
-        return jsonify({
+        print(f"✅ SUCCESS: Quiz created with ID: {quiz_doc['id']}")
+        
+        response = jsonify({
             'message': 'Quiz created successfully',
             'quiz': quiz_doc
-        }), 201
+        })
+        
+        return add_cors_headers(response), 201
         
     except Exception as e:
+        print(f"❌ EXCEPTION: Error creating quiz: {str(e)}")
+        import traceback
+        print(f"❌ TRACEBACK: {traceback.format_exc()}")
         current_app.logger.error(f"Error creating quiz: {str(e)}")
-        return jsonify({'error': f'Failed to create quiz: {str(e)}'}), 500
-
-# Add more routes as needed...
-
-@quiz_bp.route('/test', methods=['GET', 'POST'])
-def test_route():
-    """Test route to verify the API is working"""
-    if request.method == 'POST':
-        data = request.get_json() or {}
-        return jsonify({
-            'message': 'POST test successful',
-            'received_data': data,
-            'status': 'success',
-            'timestamp': datetime.utcnow().isoformat()
-        }), 200
-    
-    return jsonify({
-        'message': 'Quiz API is working!',
-        'status': 'success',
-        'timestamp': datetime.utcnow().isoformat()
-    }), 200
-
-#quiz
-# Add these routes to your existing quiz_bp
-
-@quiz_bp.route('/student/quizzes', methods=['GET'])
-def get_student_quizzes():
-    """Get all quizzes available for students"""
+        response = jsonify({'error': f'Failed to create quiz: {str(e)}'})
+        return add_cors_headers(response), 500
+@quiz_bp.route('/quizzes/<quiz_id>', methods=['DELETE'])
+def delete_quiz(quiz_id):
+    """Delete a quiz"""
     try:
-        # Get query parameters
-        search = request.args.get('search', '')
-        subject = request.args.get('subject', '')
-        status = request.args.get('status', 'active')  # Default to active quizzes
+        # Get school_id and user_id
+        school_id = get_school_id_from_request()
+        user_id = get_current_user_id()
         
-        # Build query - only get published quizzes
-        query = {'status': 'published'}
+        if not school_id:
+            return jsonify({'error': 'School ID is required'}), 400
         
-        if search:
-            query['$or'] = [
-                {'title': {'$regex': search, '$options': 'i'}},
-                {'description': {'$regex': search, '$options': 'i'}},
-                {'subject': {'$regex': search, '$options': 'i'}}
-            ]
+        if not user_id:
+            return jsonify({'error': 'User authentication required'}), 401
         
-        if subject:
-            query['subject'] = subject
-        
-        # Get quizzes from MongoDB
         db = current_app.db
-        quizzes_cursor = db.quizzes.find(query).sort('created_at', -1)
-        quizzes = list(quizzes_cursor)
         
-        # Convert ObjectId to string and remove correct answers
-        quiz_list = []
-        for quiz in quizzes:
-            quiz['id'] = str(quiz['_id'])
-            del quiz['_id']
-            
-            # Remove correct answers from questions for student view
-            if 'questions' in quiz:
-                for q in quiz['questions']:
-                    if '_id' in q:
-                        q['id'] = str(q['_id'])
-                        del q['_id']
-                    # Remove correct_answer for student view
-                    q.pop('correct_answer', None)
-                    q.pop('explanation', None)
-            
-            quiz_list.append(quiz)
-        
-        # Get unique subjects for filter
-        subjects = db.quizzes.distinct('subject', {'status': 'published'})
-        
-        return jsonify({
-            'quizzes': quiz_list,
-            'subjects': subjects,
-            'total': len(quiz_list)
-        }), 200
-        
-    except Exception as e:
-        current_app.logger.error(f"Error fetching student quizzes: {str(e)}")
-        return jsonify({'error': 'Failed to fetch quizzes'}), 500
-
-@quiz_bp.route('/student/quiz/<quiz_id>', methods=['GET'])
-def get_student_quiz(quiz_id):
-    """Get a specific quiz for student attempt"""
-    try:
-        # Verify quiz exists and is published
-        db = current_app.db
-        quiz = db.quizzes.find_one({
+        # Delete quiz only if it belongs to the teacher and school
+        result = db.quizzes.delete_one({
             '_id': ObjectId(quiz_id),
-            'status': 'published'
+            'teacher_id': user_id,
+            'school_id': school_id
         })
         
-        if not quiz:
-            return jsonify({'error': 'Quiz not found or not available'}), 404
+        if result.deleted_count == 0:
+            return jsonify({'error': 'Quiz not found or unauthorized'}), 404
         
-        # Convert ObjectId to string
-        quiz['id'] = str(quiz['_id'])
-        del quiz['_id']
-        
-        # Remove correct answers from questions
-        if 'questions' in quiz:
-            for q in quiz['questions']:
-                if '_id' in q:
-                    q['id'] = str(q['_id'])
-                    del q['_id']
-                # Remove correct_answer for student attempt
-                q.pop('correct_answer', None)
-                q.pop('explanation', None)
-        
-        return jsonify(quiz), 200
+        return jsonify({'message': 'Quiz deleted successfully'}), 200
         
     except Exception as e:
-        current_app.logger.error(f"Error fetching student quiz: {str(e)}")
-        return jsonify({'error': 'Failed to fetch quiz'}), 500
-
-@quiz_bp.route('/student/quiz/submit', methods=['POST'])
-def submit_quiz():
-    """Submit a quiz attempt and calculate results"""
-    try:
-        if not request.is_json:
-            return jsonify({'error': 'Missing JSON in request'}), 400
-            
-        data = request.get_json()
-        if not data:
-            return jsonify({'error': 'No data provided'}), 400
-        
-        # Validate required fields
-        required_fields = ['quiz_id', 'student_id', 'student_email', 'answers']
-        missing_fields = validate_required_fields(data, required_fields)
-        if missing_fields:
-            return jsonify({'error': f'Missing required fields: {", ".join(missing_fields)}'}), 400
-        
-        # Get quiz with correct answers
-        db = current_app.db
-        quiz = db.quizzes.find_one({
-            '_id': ObjectId(data['quiz_id']),
-            'status': 'published'
-        })
-        
-        if not quiz:
-            return jsonify({'error': 'Quiz not found or not available'}), 404
-        
-        # Calculate results
-        total_questions = len(quiz['questions'])
-        correct_answers = 0
-        total_score = 0
-        max_score = quiz.get('total_points', 0)
-        
-        # Evaluate each answer
-        question_results = []
-        for i, question in enumerate(quiz['questions']):
-            question_id = str(question.get('_id', '')) or str(i)
-            student_answer = next((ans for ans in data['answers'] 
-                                  if ans.get('question_id') == question_id), None)
-            
-            # Get correct answer
-            correct_answer = question.get('correct_answer', '')
-            points = question.get('points', 1)
-            
-            # Check if answer is correct
-            is_correct = False
-            if student_answer:
-                student_response = student_answer.get('answer', '').strip()
-                
-                if question.get('question_type') == 'multiple_choice':
-                    is_correct = student_response == correct_answer
-                elif question.get('question_type') == 'true_false':
-                    is_correct = str(student_response).lower() == str(correct_answer).lower()
-                else:
-                    # For short_answer and numerical
-                    is_correct = str(student_response).strip().lower() == str(correct_answer).strip().lower()
-            
-            # Calculate score for this question
-            question_score = points if is_correct else 0
-            total_score += question_score
-            
-            if is_correct:
-                correct_answers += 1
-            
-            # Store question result
-            question_result = {
-                'question_id': question_id,
-                'question_text': question.get('question_text', ''),
-                'question_type': question.get('question_type', ''),
-                'student_answer': student_answer.get('answer', '') if student_answer else '',
-                'correct_answer': correct_answer,
-                'is_correct': is_correct,
-                'points': points,
-                'score': question_score,
-                'explanation': question.get('explanation', '')
-            }
-            question_results.append(question_result)
-        
-        # Calculate percentage
-        percentage = (total_score / max_score * 100) if max_score > 0 else 0
-        
-        # Determine grade based on percentage
-        if percentage >= 90:
-            grade = 'A'
-        elif percentage >= 80:
-            grade = 'B'
-        elif percentage >= 70:
-            grade = 'C'
-        elif percentage >= 60:
-            grade = 'D'
-        else:
-            grade = 'F'
-        
-        # Create result document
-        result_doc = {
-            'quiz_id': data['quiz_id'],
-            'quiz_title': quiz.get('title', ''),
-            'quiz_subject': quiz.get('subject', ''),
-            'student_id': data['student_id'],
-            'student_email': data['student_email'],
-            'student_name': data.get('student_name', ''),
-            'total_questions': total_questions,
-            'correct_answers': correct_answers,
-            'total_score': total_score,
-            'max_score': max_score,
-            'percentage': round(percentage, 2),
-            'grade': grade,
-            'question_results': question_results,
-            'submitted_at': datetime.utcnow(),
-            'time_taken': data.get('time_taken', 0),  # in seconds
-            'attempt_number': data.get('attempt_number', 1)
-        }
-        
-        # Check if this is a retake
-        if data.get('attempt_number', 1) > 1:
-            # Keep previous attempts
-            result_doc['is_retake'] = True
-        
-        # Insert result into MongoDB
-        result = db.quiz_results.insert_one(result_doc)
-        result_doc['id'] = str(result.inserted_id)
-        del result_doc['_id']
-        
-        return jsonify({
-            'message': 'Quiz submitted successfully',
-            'result': result_doc
-        }), 201
-        
-    except Exception as e:
-        current_app.logger.error(f"Error submitting quiz: {str(e)}")
-        return jsonify({'error': f'Failed to submit quiz: {str(e)}'}), 500
-
-@quiz_bp.route('/student/results', methods=['GET'])
-def get_student_results():
-    """Get quiz results for a specific student"""
-    try:
-        student_email = request.args.get('student_email', '')
-        student_id = request.args.get('student_id', '')
-        
-        if not student_email and not student_id:
-            return jsonify({'error': 'Student email or ID is required'}), 400
-        
-        # Build query - FIXED: Use OR logic to find by either email or ID
-        query = {}
-        if student_email:
-            query['student_email'] = student_email
-        if student_id:
-            query['student_id'] = student_id
-        
-        print(f"Querying results with: {query}")  # Debug log
-        
-        # Get results from MongoDB
-        db = current_app.db
-        results_cursor = db.quiz_results.find(query).sort('submitted_at', -1)
-        results = list(results_cursor)
-        
-        print(f"Found {len(results)} results")  # Debug log
-        
-        # Convert ObjectId to string
-        result_list = []
-        for result in results:
-            result['id'] = str(result['_id'])
-            result['_id'] = str(result['_id'])  # Keep _id for compatibility
-            result_list.append(result)
-        
-        return jsonify({
-            'results': result_list,
-            'total': len(result_list)
-        }), 200
-        
-    except Exception as e:
-        current_app.logger.error(f"Error fetching student results: {str(e)}")
-        return jsonify({'error': f'Failed to fetch results: {str(e)}'}), 500
+        current_app.logger.error(f"Error deleting quiz: {str(e)}")
+        return jsonify({'error': 'Failed to delete quiz'}), 500
 
 @quiz_bp.route('/quiz/publish/<quiz_id>', methods=['PUT'])
 def publish_quiz(quiz_id):
     """Publish a quiz to make it available to students"""
     try:
+        # Get school_id and user_id
+        school_id = get_school_id_from_request()
         user_id = get_current_user_id()
+        
+        if not school_id:
+            return jsonify({'error': 'School ID is required'}), 400
+        
+        if not user_id:
+            return jsonify({'error': 'User authentication required'}), 401
         
         db = current_app.db
         result = db.quizzes.update_one(
             {
                 '_id': ObjectId(quiz_id),
-                'teacher_id': user_id
+                'teacher_id': user_id,
+                'school_id': school_id
             },
             {
                 '$set': {
@@ -678,13 +737,22 @@ def publish_quiz(quiz_id):
 def unpublish_quiz(quiz_id):
     """Unpublish a quiz to make it unavailable to students"""
     try:
+        # Get school_id and user_id
+        school_id = get_school_id_from_request()
         user_id = get_current_user_id()
+        
+        if not school_id:
+            return jsonify({'error': 'School ID is required'}), 400
+        
+        if not user_id:
+            return jsonify({'error': 'User authentication required'}), 401
         
         db = current_app.db
         result = db.quizzes.update_one(
             {
                 '_id': ObjectId(quiz_id),
-                'teacher_id': user_id
+                'teacher_id': user_id,
+                'school_id': school_id
             },
             {
                 '$set': {
@@ -702,217 +770,42 @@ def unpublish_quiz(quiz_id):
     except Exception as e:
         current_app.logger.error(f"Error unpublishing quiz: {str(e)}")
         return jsonify({'error': 'Failed to unpublish quiz'}), 500
-@quiz_bp.route('/student/quiz/attempt/<quiz_id>', methods=['GET'])
-def get_quiz_for_attempt(quiz_id):
-    """Get quiz details for attempt (without answers)"""
-    try:
-        db = current_app.db
-        quiz = db.quizzes.find_one({
-            '_id': ObjectId(quiz_id),
-            'status': 'published'
-        })
-        
-        if not quiz:
-            return jsonify({'error': 'Quiz not found or not available'}), 404
-        
-        # Convert ObjectId to string
-        quiz['id'] = str(quiz['_id'])
-        del quiz['_id']
-        
-        # Prepare quiz for attempt
-        attempt_data = {
-            'id': quiz['id'],
-            'title': quiz.get('title', ''),
-            'subject': quiz.get('subject', ''),
-            'description': quiz.get('description', ''),
-            'teacher_id': quiz.get('teacher_id', ''),
-            'time_limit': quiz.get('time_limit', 60),
-            'total_points': quiz.get('total_points', 0),
-            'questions': []
-        }
-        
-        # Process questions (remove correct answers)
-        if 'questions' in quiz:
-            for i, q in enumerate(quiz['questions']):
-                question_data = {
-                    'id': str(i) if '_id' not in q else str(q['_id']),
-                    'question_text': q.get('question_text', ''),
-                    'question_type': q.get('question_type', 'multiple_choice'),
-                    'points': q.get('points', 1),
-                    'difficulty': q.get('difficulty', 'medium'),
-                    'time_estimate': q.get('time_estimate', 2),
-                    'order_index': q.get('order_index', i + 1)
-                }
-                
-                # Add options for multiple choice questions
-                if q.get('question_type') == 'multiple_choice':
-                    question_data['options'] = q.get('options', [])
-                
-                attempt_data['questions'].append(question_data)
-        
-        return jsonify(attempt_data), 200
-        
-    except Exception as e:
-        current_app.logger.error(f"Error fetching quiz for attempt: {str(e)}")
-        return jsonify({'error': 'Failed to fetch quiz for attempt'}), 500
 
-@quiz_bp.route('/student/quiz/attempt', methods=['POST'])
-def save_quiz_attempt():
-    """Save a quiz attempt (for auto-saving during quiz)"""
-    try:
-        if not request.is_json:
-            return jsonify({'error': 'Missing JSON in request'}), 400
-            
-        data = request.get_json()
-        if not data:
-            return jsonify({'error': 'No data provided'}), 400
-        
-        # Validate required fields
-        required_fields = ['quiz_id', 'student_id', 'student_email', 'answers']
-        missing_fields = validate_required_fields(data, required_fields)
-        if missing_fields:
-            return jsonify({'error': f'Missing required fields: {", ".join(missing_fields)}'}), 400
-        
-        db = current_app.db
-        
-        # Create attempt document
-        attempt_doc = {
-            'quiz_id': data['quiz_id'],
-            'student_id': data['student_id'],
-            'student_email': data['student_email'],
-            'student_name': data.get('student_name', ''),
-            'answers': data['answers'],
-            'current_question': data.get('current_question', 0),
-            'time_spent': data.get('time_spent', 0),
-            'is_submitted': False,
-            'created_at': datetime.utcnow(),
-            'updated_at': datetime.utcnow(),
-            'expires_at': datetime.utcnow() + timedelta(hours=24)  # Attempt expires in 24 hours
-        }
-        
-        # Check for existing unsubmitted attempt
-        existing_attempt = db.quiz_attempts.find_one({
-            'quiz_id': data['quiz_id'],
-            'student_id': data['student_id'],
-            'is_submitted': False,
-            'expires_at': {'$gt': datetime.utcnow()}
-        })
-        
-        if existing_attempt:
-            # Update existing attempt
-            result = db.quiz_attempts.update_one(
-                {'_id': existing_attempt['_id']},
-                {
-                    '$set': {
-                        'answers': data['answers'],
-                        'current_question': data.get('current_question', 0),
-                        'time_spent': data.get('time_spent', 0),
-                        'updated_at': datetime.utcnow()
-                    }
-                }
-            )
-            return jsonify({
-                'message': 'Quiz attempt updated successfully',
-                'attempt_id': str(existing_attempt['_id'])
-            }), 200
-        else:
-            # Insert new attempt
-            result = db.quiz_attempts.insert_one(attempt_doc)
-            return jsonify({
-                'message': 'Quiz attempt saved successfully',
-                'attempt_id': str(result.inserted_id)
-            }), 201
-            
-    except Exception as e:
-        current_app.logger.error(f"Error saving quiz attempt: {str(e)}")
-        return jsonify({'error': f'Failed to save quiz attempt: {str(e)}'}), 500
 
-@quiz_bp.route('/student/quiz/resume/<quiz_id>', methods=['GET'])
-def get_quiz_attempt(quiz_id):
-    """Get existing quiz attempt to resume"""
-    try:
-        student_email = request.args.get('student_email', '')
-        student_id = request.args.get('student_id', '')
-        
-        if not student_email and not student_id:
-            return jsonify({'error': 'Student email or ID is required'}), 400
-        
-        db = current_app.db
-        
-        # Find unsubmitted attempt
-        query = {
-            'quiz_id': quiz_id,
-            'is_submitted': False,
-            'expires_at': {'$gt': datetime.utcnow()}
-        }
-        
-        if student_email:
-            query['student_email'] = student_email
-        if student_id:
-            query['student_id'] = student_id
-        
-        attempt = db.quiz_attempts.find_one(query)
-        
-        if not attempt:
-            return jsonify({'message': 'No active attempt found', 'attempt': None}), 200
-        
-        # Convert ObjectId to string
-        attempt['id'] = str(attempt['_id'])
-        del attempt['_id']
-        
-        return jsonify({
-            'message': 'Active attempt found',
-            'attempt': attempt
-        }), 200
-        
-    except Exception as e:
-        current_app.logger.error(f"Error fetching quiz attempt: {str(e)}")
-        return jsonify({'error': 'Failed to fetch quiz attempt'}), 500
 
-@quiz_bp.route('/student/quiz/result/<attempt_id>', methods=['GET'])
-def get_quiz_result(attempt_id):
-    """Get quiz result after submission"""
-    try:
-        db = current_app.db
-        
-        # Get the result
-        result = db.quiz_results.find_one({'_id': ObjectId(attempt_id)})
-        
-        if not result:
-            return jsonify({'error': 'Result not found'}), 404
-        
-        # Convert ObjectId to string
-        result['id'] = str(result['_id'])
-        del result['_id']
-        
-        return jsonify({
-            'result': result
-        }), 200
-        
-    except Exception as e:
-        current_app.logger.error(f"Error fetching quiz result: {str(e)}")
-        return jsonify({'error': 'Failed to fetch quiz result'}), 500
+# ==================== TEACHER RESULTS ROUTES ====================
+
 @quiz_bp.route('/teacher/results', methods=['GET'])
 def get_teacher_results():
-    """Get all quiz results for teacher view (for all students)"""
+    """Get all quiz results for teacher view (for all students in their school)"""
     try:
-        # In a real implementation, you would verify teacher authentication here
-        # For now, we'll just return all results
+        # Get school_id
+        school_id = get_school_id_from_request()
+        user_id = get_current_user_id()
+        
+        if not school_id:
+            return jsonify({'error': 'School ID is required'}), 400
         
         # Get query parameters for filtering
         student_email = request.args.get('student_email', '')
         subject = request.args.get('subject', '')
+        quiz_id = request.args.get('quiz_id', '')
         start_date = request.args.get('start_date', '')
         end_date = request.args.get('end_date', '')
+        page = int(request.args.get('page', 1))
+        limit = int(request.args.get('limit', 20))
         
         # Build query
-        query = {}
+        query = {'school_id': school_id}
         
         if student_email:
             query['student_email'] = student_email
         
         if subject:
             query['quiz_subject'] = subject
+        
+        if quiz_id:
+            query['quiz_id'] = quiz_id
         
         if start_date:
             try:
@@ -931,25 +824,33 @@ def get_teacher_results():
             except ValueError:
                 pass
         
-        print(f"Teacher querying results with: {query}")  # Debug log
+        print(f"📋 Teacher results query: {query}")
         
         # Get results from MongoDB
         db = current_app.db
-        results_cursor = db.quiz_results.find(query).sort('submitted_at', -1)
-        results = list(results_cursor)
+        total = db.quiz_results.count_documents(query)
+        skip = (page - 1) * limit
         
-        print(f"Found {len(results)} results for teacher")  # Debug log
+        results_cursor = db.quiz_results.find(query)\
+            .sort('submitted_at', -1)\
+            .skip(skip)\
+            .limit(limit)
+        
+        results = list(results_cursor)
         
         # Convert ObjectId to string
         result_list = []
         for result in results:
             result['id'] = str(result['_id'])
-            result['_id'] = str(result['_id'])  # Keep _id for compatibility
+            result['_id'] = str(result['_id'])
             
             # Add student details if not present
             if 'student_name' not in result and 'student_email' in result:
-                # Try to get student name from users collection
-                student = db.users.find_one({'email': result['student_email']})
+                # Try to get student name from students collection
+                student = db.students.find_one({
+                    'email': result['student_email'],
+                    'school_id': school_id
+                })
                 if student:
                     result['student_name'] = student.get('name', 'Unknown')
             
@@ -957,6 +858,7 @@ def get_teacher_results():
         
         # Get aggregation data for analytics
         aggregation = [
+            {'$match': {'school_id': school_id}},
             {
                 '$group': {
                     '_id': '$quiz_subject',
@@ -982,95 +884,47 @@ def get_teacher_results():
         return jsonify({
             'results': result_list,
             'analytics': analytics,
-            'total': len(result_list)
+            'total': total,
+            'page': page,
+            'limit': limit,
+            'pages': math.ceil(total / limit) if limit > 0 else 1
         }), 200
         
     except Exception as e:
         current_app.logger.error(f"Error fetching teacher results: {str(e)}")
         return jsonify({'error': f'Failed to fetch teacher results: {str(e)}'}), 500
-@quiz_bp.route('/teacher/student/results', methods=['GET'])
-def get_student_results_for_teacher():
-    """Get quiz results for a specific student (teacher view)"""
+
+# ==================== TEST ROUTE ====================
+@quiz_bp.route('/test', methods=['GET'])
+def test_route():
+    """Test route to verify the API is working"""
+    return jsonify({
+        'message': 'Quiz API is working!',
+        'status': 'success',
+        'timestamp': datetime.utcnow().isoformat()
+    }), 200
+
+# ==================== HEALTH CHECK ====================
+@quiz_bp.route('/health', methods=['GET'])
+def health_check():
+    """Health check endpoint"""
     try:
-        student_email = request.args.get('student_email', '')
-        student_id = request.args.get('student_id', '')
-        
-        if not student_email and not student_id:
-            return jsonify({'error': 'Student email or ID is required'}), 400
-        
-        # Build query
-        query = {}
-        if student_email:
-            query['student_email'] = student_email
-        if student_id:
-            query['student_id'] = student_id
-        
-        print(f"Teacher querying student results with: {query}")  # Debug log
-        
-        # Get results from MongoDB
         db = current_app.db
-        results_cursor = db.quiz_results.find(query).sort('submitted_at', -1)
-        results = list(results_cursor)
+        # Try to ping the database
+        db.command('ping')
         
-        print(f"Found {len(results)} results for student")  # Debug log
-        
-        # Convert ObjectId to string
-        result_list = []
-        for result in results:
-            result['id'] = str(result['_id'])
-            result['_id'] = str(result['_id'])  # Keep _id for compatibility
-            result_list.append(result)
-        
-        # Calculate student statistics
-        if results:
-            percentages = [r['percentage'] for r in results]
-            subjects = list(set([r.get('quiz_subject', 'Unknown') for r in results]))
-            
-            stats = {
-                'average_score': sum(percentages) / len(percentages),
-                'high_score': max(percentages),
-                'low_score': min(percentages),
-                'total_quizzes': len(results),
-                'subjects_attempted': subjects,
-                'improvement_trend': calculate_improvement_trend(results)
-            }
-        else:
-            stats = {
-                'average_score': 0,
-                'high_score': 0,
-                'low_score': 0,
-                'total_quizzes': 0,
-                'subjects_attempted': [],
-                'improvement_trend': 0
-            }
+        # Check if collections exist
+        collections = db.list_collection_names()
         
         return jsonify({
-            'results': result_list,
-            'stats': stats,
-            'total': len(result_list)
+            'status': 'healthy',
+            'database': 'connected',
+            'collections': [col for col in ['question_bank', 'quizzes', 'quiz_results'] if col in collections],
+            'timestamp': datetime.utcnow().isoformat()
         }), 200
-        
     except Exception as e:
-        current_app.logger.error(f"Error fetching student results for teacher: {str(e)}")
-        return jsonify({'error': f'Failed to fetch student results: {str(e)}'}), 500
-
-def calculate_improvement_trend(results):
-    """Calculate improvement trend based on recent performance"""
-    if len(results) < 2:
-        return 0
-    
-    # Sort by date
-    sorted_results = sorted(results, key=lambda x: x['submitted_at'])
-    
-    # Split into halves
-    mid_point = len(sorted_results) // 2
-    first_half = sorted_results[:mid_point]
-    second_half = sorted_results[mid_point:]
-    
-    if not first_half or not second_half:
-        return 0
-    
-    avg_first = sum(r['percentage'] for r in first_half) / len(first_half)
-    avg_second = sum(r['percentage'] for r in second_half) / len(second_half)
-    
-    return avg_second - avg_first
+        return jsonify({
+            'status': 'unhealthy',
+            'error': str(e),
+            'timestamp': datetime.utcnow().isoformat()
+        }), 500
