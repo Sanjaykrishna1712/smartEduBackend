@@ -1,13 +1,24 @@
-# app/routes/calendar.py
 from flask import Blueprint, request, jsonify
 from datetime import datetime, timedelta
 import uuid
 from bson import ObjectId
 from app.utils.mongo import get_db
-from flask_cors import cross_origin
 
-# Create Blueprint without URL prefix - we'll register it with prefixes in __init__.py
 calendar_bp = Blueprint('calendar', __name__)
+
+# Handle OPTIONS requests globally for all routes
+@calendar_bp.before_request
+def handle_options():
+    if request.method == 'OPTIONS':
+        # Return a 200 OK response for OPTIONS preflight
+        response = jsonify({'success': True})
+        response.headers.add('Access-Control-Allow-Origin', 'https://smartedufrontend.onrender.com')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-School-ID, Accept')
+        response.headers.add('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
+        response.headers.add('Access-Control-Allow-Credentials', 'true')
+        return response
+
+# Or update your CORS configuration in __init__.py:
 
 # Get event color based on type
 def get_event_color(event_type):
@@ -75,22 +86,51 @@ def parse_date_string(date_str):
     except:
         raise ValueError(f"Unable to parse date string: {date_str}")
 
+# Helper to get school_id from request
+def get_school_id_from_request():
+    """Extract school_id from multiple sources"""
+    # 1. Check headers
+    school_id = request.headers.get('X-School-ID')
+    
+    # 2. Check query parameters
+    if not school_id:
+        school_id = request.args.get('school_id')
+    
+    # 3. Check JSON body (for POST/PUT)
+    if not school_id and request.method in ['POST', 'PUT', 'PATCH']:
+        try:
+            if request.is_json:
+                data = request.get_json()
+                school_id = data.get('school_id') if data else None
+        except:
+            pass
+    
+    # 4. Check form data
+    if not school_id:
+        school_id = request.form.get('school_id')
+    
+    return school_id
+
 # Build audience query
-def build_audience_query(user_role=None, current_user=None):
-    """Build query based on user role"""
+def build_audience_query(user_role=None, current_user=None, school_id=None):
+    """Build query based on user role and school_id"""
+    query = {'is_active': True}
+    
+    # Add school_id filter if provided
+    if school_id:
+        query['school_id'] = school_id
+    
     if user_role in ['principal', 'admin']:
-        return {'is_active': True}
+        return query
     
     if user_role == 'guest' or not user_role:
-        return {'is_active': True, 'audience': 'all'}
+        query['audience'] = 'all'
+        return query
     
-    query = {
-        'is_active': True,
-        '$or': [
-            {'audience': 'all'},
-            {'audience': user_role + 's'}
-        ]
-    }
+    query['$or'] = [
+        {'audience': 'all'},
+        {'audience': user_role + 's'}
+    ]
     
     # Add role-specific audiences
     if user_role == 'teacher':
@@ -109,30 +149,44 @@ def build_audience_query(user_role=None, current_user=None):
     
     return query
 
-# Helper to get user info from request (simplified without JWT)
+# Helper to get user info from request
 def get_current_user():
-    """Get current user info from request headers or session"""
-    # For now, return a default user or extract from simple auth
-    # You can implement your own authentication logic here
+    """Get current user info from JWT token"""
+    auth_header = request.headers.get('Authorization')
     
-    # Example: Check for a simple token in headers
-    auth_token = request.headers.get('X-Auth-Token') or request.headers.get('Authorization')
-    
-    if auth_token:
-        # Simple validation - in real app, validate token properly
+    if not auth_header:
         return {
-            'role': 'admin',  # Default role for testing
-            'user_id': 'admin_001',
-            'name': 'Administrator'
+            'role': 'guest',
+            'user_id': None,
+            'name': 'Guest',
+            'school_id': request.headers.get('X-School-ID')
         }
     
-    # For public access
-    return {
-        'role': 'guest',
-        'user_id': None,
-        'name': 'Guest'
-    }
-
+    try:
+        # Extract token from "Bearer <token>" format
+        token = auth_header.split(' ')[1] if ' ' in auth_header else auth_header
+        
+        # Decode JWT token (you'll need to implement proper JWT validation)
+        # This is a placeholder - implement your actual JWT validation
+        from flask_jwt_extended import decode_token
+        # decoded_token = decode_token(token)
+        
+        # For now, return a mock user
+        return {
+            'role': 'admin',
+            'user_id': 'admin_001',
+            'name': 'Administrator',
+            'school_id': request.headers.get('X-School-ID')
+        }
+        
+    except Exception as e:
+        print(f"Token validation error: {e}")
+        return {
+            'role': 'guest',
+            'user_id': None,
+            'name': 'Guest',
+            'school_id': request.headers.get('X-School-ID')
+        }
 # GET: Get all calendar events with filters
 @calendar_bp.route('/events', methods=['GET', 'OPTIONS'])
 def get_calendar_events():
@@ -140,6 +194,20 @@ def get_calendar_events():
         # Get current user info
         current_user = get_current_user()
         user_role = current_user.get('role', 'guest')
+        
+        # Get school_id from request
+        school_id = get_school_id_from_request()
+        
+        # If no school_id in request, try to get from user info
+        if not school_id and current_user.get('school_id'):
+            school_id = current_user.get('school_id')
+        
+        # Validate school_id
+        if not school_id:
+            return jsonify({
+                'success': False,
+                'error': 'School ID is required'
+            }), 400
         
         # Get query parameters
         month = request.args.get('month')
@@ -149,7 +217,7 @@ def get_calendar_events():
         db = get_db()
         
         # Build query
-        query = build_audience_query(user_role, current_user)
+        query = build_audience_query(user_role, current_user, school_id)
         
         # Filter by month
         if month:
@@ -214,7 +282,8 @@ def get_calendar_events():
             'success': True,
             'events': serialized_events,
             'stats': event_stats,
-            'count': len(serialized_events)
+            'count': len(serialized_events),
+            'school_id': school_id
         }), 200
         
     except Exception as e:
@@ -250,8 +319,17 @@ def create_calendar_event():
         
         print(f"📥 Creating calendar event with data: {data}")
         
+        # Get school_id from request data or user info
+        school_id = data.get('school_id') or current_user.get('school_id')
+        
+        if not school_id:
+            return jsonify({
+                'success': False,
+                'error': 'School ID is required'
+            }), 400
+        
         # Validate required fields
-        required_fields = ['title', 'start', 'end', 'type']
+        required_fields = ['title', 'start', 'end', 'type', 'school_id']
         for field in required_fields:
             if not data.get(field):
                 return jsonify({
@@ -303,6 +381,7 @@ def create_calendar_event():
             'teacher': data.get('teacher', '').strip(),
             'class': data.get('class', '').strip(),
             'location': data.get('location', '').strip(),
+            'school_id': school_id.strip(),  # Add school_id to event data
             'audience': data.get('audience', 'all'),
             'class_restriction': data.get('class_restriction', []),
             'priority': data.get('priority', 'medium'),
@@ -310,7 +389,8 @@ def create_calendar_event():
             'created_by': {
                 'user_id': current_user.get('user_id', ''),
                 'name': current_user.get('name', 'Administrator'),
-                'role': user_role
+                'role': user_role,
+                'school_id': school_id
             },
             'created_at': datetime.utcnow(),
             'updated_at': datetime.utcnow(),
@@ -328,12 +408,13 @@ def create_calendar_event():
         serialized_event = serialize_document(created_event)
         serialized_event['color'] = get_event_color(created_event.get('type', 'other'))
         
-        print(f"✅ Event created successfully: {event_id}")
+        print(f"✅ Event created successfully: {event_id} for school: {school_id}")
         return jsonify({
             'success': True,
             'message': 'Event created successfully',
             'event': serialized_event,
-            'event_id': event_id
+            'event_id': event_id,
+            'school_id': school_id
         }), 201
         
     except Exception as e:
@@ -347,9 +428,7 @@ def create_calendar_event():
 
 # PUT: Update an event
 @calendar_bp.route('/events/<event_id>', methods=['PUT', 'OPTIONS'])
-@cross_origin(origins="https://smartedufrontend.onrender.com")
 def update_event(event_id):
-
     try:
         # Get current user info
         current_user = get_current_user()
@@ -369,22 +448,34 @@ def update_event(event_id):
                 'error': 'No data provided'
             }), 400
         
+        # Get school_id from request
+        school_id = data.get('school_id') or current_user.get('school_id')
+        
+        if not school_id:
+            return jsonify({
+                'success': False,
+                'error': 'School ID is required'
+            }), 400
+        
         # Get database connection
         db = get_db()
         
-        # Find the event
-        event = db.calendar_events.find_one({
+        # Find the event with school_id filter
+        event_query = {
             '$or': [
                 {'event_id': event_id},
                 {'_id': ObjectId(event_id) if ObjectId.is_valid(event_id) else None}
             ],
-            'is_active': True
-        })
+            'is_active': True,
+            'school_id': school_id  # Add school_id filter
+        }
+        
+        event = db.calendar_events.find_one(event_query)
         
         if not event:
             return jsonify({
                 'success': False,
-                'error': 'Event not found'
+                'error': 'Event not found or you do not have permission to update this event'
             }), 404
         
         # Prepare update data
@@ -435,6 +526,7 @@ def update_event(event_id):
             'teacher': 'teacher',
             'class': 'class',
             'location': 'location',
+            'school_id': 'school_id',  # Add school_id to field mappings
             'audience': 'audience',
             'class_restriction': 'class_restriction',
             'priority': 'priority',
@@ -452,7 +544,8 @@ def update_event(event_id):
         update_data['updated_by'] = {
             'user_id': current_user.get('user_id'),
             'name': current_user.get('name', 'Administrator'),
-            'role': user_role
+            'role': user_role,
+            'school_id': school_id
         }
         
         # Update the event
@@ -498,22 +591,34 @@ def delete_event(event_id):
                 'error': 'Unauthorized: Only principals and admins can delete events'
             }), 403
         
+        # Get school_id from request
+        school_id = get_school_id_from_request() or current_user.get('school_id')
+        
+        if not school_id:
+            return jsonify({
+                'success': False,
+                'error': 'School ID is required'
+            }), 400
+        
         # Get database connection
         db = get_db()
         
-        # Find the event
-        event = db.calendar_events.find_one({
+        # Find the event with school_id filter
+        event_query = {
             '$or': [
                 {'event_id': event_id},
                 {'_id': ObjectId(event_id) if ObjectId.is_valid(event_id) else None}
             ],
-            'is_active': True
-        })
+            'is_active': True,
+            'school_id': school_id  # Add school_id filter
+        }
+        
+        event = db.calendar_events.find_one(event_query)
         
         if not event:
             return jsonify({
                 'success': False,
-                'error': 'Event not found'
+                'error': 'Event not found or you do not have permission to delete this event'
             }), 404
         
         # Soft delete (mark as inactive)
@@ -526,7 +631,8 @@ def delete_event(event_id):
                     'deleted_by': {
                         'user_id': current_user.get('user_id'),
                         'name': current_user.get('name', 'Administrator'),
-                        'role': user_role
+                        'role': user_role,
+                        'school_id': school_id
                     }
                 }
             }
@@ -552,6 +658,15 @@ def get_upcoming_events():
         current_user = get_current_user()
         user_role = current_user.get('role', 'guest')
         
+        # Get school_id from request
+        school_id = get_school_id_from_request() or current_user.get('school_id')
+        
+        if not school_id:
+            return jsonify({
+                'success': False,
+                'error': 'School ID is required'
+            }), 400
+        
         # Get database connection
         db = get_db()
         
@@ -559,8 +674,8 @@ def get_upcoming_events():
         now = datetime.utcnow()
         seven_days_later = now + timedelta(days=7)
         
-        # Build query for upcoming events
-        query = build_audience_query(user_role, current_user)
+        # Build query for upcoming events with school_id filter
+        query = build_audience_query(user_role, current_user, school_id)
         query['start'] = {
             '$gte': now,
             '$lte': seven_days_later
@@ -583,7 +698,8 @@ def get_upcoming_events():
         return jsonify({
             'success': True,
             'events': serialized_events,
-            'count': len(serialized_events)
+            'count': len(serialized_events),
+            'school_id': school_id
         }), 200
         
     except Exception as e:
@@ -601,11 +717,20 @@ def get_calendar_stats():
         current_user = get_current_user()
         user_role = current_user.get('role', 'guest')
         
+        # Get school_id from request
+        school_id = get_school_id_from_request() or current_user.get('school_id')
+        
+        if not school_id:
+            return jsonify({
+                'success': False,
+                'error': 'School ID is required'
+            }), 400
+        
         # Get database connection
         db = get_db()
         
-        # Build query based on user role
-        query = build_audience_query(user_role, current_user)
+        # Build query based on user role and school_id
+        query = build_audience_query(user_role, current_user, school_id)
         
         # Get current month events
         now = datetime.utcnow()
@@ -697,7 +822,8 @@ def get_calendar_stats():
             'stats': stats,
             'upcoming_count': upcoming_count,
             'today_count': today_count,
-            'month': now.strftime('%B %Y')
+            'month': now.strftime('%B %Y'),
+            'school_id': school_id
         }), 200
         
     except Exception as e:
@@ -705,4 +831,75 @@ def get_calendar_stats():
         return jsonify({
             'success': False,
             'error': f'Failed to fetch stats: {str(e)}'
+        }), 500
+
+# GET: Get events by school_id
+@calendar_bp.route('/events/school/<school_id>', methods=['GET', 'OPTIONS'])
+def get_events_by_school(school_id):
+    try:
+        # Get current user info
+        current_user = get_current_user()
+        user_role = current_user.get('role', 'guest')
+        
+        # Get query parameters
+        month = request.args.get('month')
+        event_type = request.args.get('type')
+        
+        # Get database connection
+        db = get_db()
+        
+        # Build query with school_id
+        query = build_audience_query(user_role, current_user, school_id)
+        
+        # Filter by month
+        if month:
+            try:
+                year, month_num = map(int, month.split('-'))
+                start_date = datetime(year, month_num, 1)
+                if month_num == 12:
+                    end_date = datetime(year + 1, 1, 1)
+                else:
+                    end_date = datetime(year, month_num + 1, 1)
+                
+                query['start'] = {
+                    '$gte': start_date,
+                    '$lt': end_date
+                }
+            except ValueError:
+                return jsonify({
+                    'success': False,
+                    'error': 'Invalid month format. Use YYYY-MM'
+                }), 400
+        
+        # Filter by event type
+        if event_type and event_type != 'all':
+            query['type'] = event_type
+        
+        # Fetch events
+        if 'calendar_events' not in db.list_collection_names():
+            events = []
+        else:
+            events_cursor = db.calendar_events.find(query).sort('start', 1)
+            events = list(events_cursor)
+        
+        # Serialize events
+        serialized_events = []
+        for event in events:
+            serialized_event = serialize_document(event)
+            serialized_event['color'] = get_event_color(event.get('type', 'other'))
+            serialized_event['id'] = str(event.get('_id', ''))
+            serialized_events.append(serialized_event)
+        
+        return jsonify({
+            'success': True,
+            'events': serialized_events,
+            'count': len(serialized_events),
+            'school_id': school_id
+        }), 200
+        
+    except Exception as e:
+        print(f"❌ Error fetching events for school {school_id}: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': f'Failed to fetch events: {str(e)}'
         }), 500
