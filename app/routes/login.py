@@ -63,8 +63,8 @@ def check_password(password, hashed_password):
     except Exception:
         return False
 
-def generate_token(user_id, user_role, school_id=None):
-    """Generate JWT token"""
+def generate_token(user_id, user_role, additional_data=None):
+    """Generate JWT token with additional user data"""
     payload = {
         'user_id': user_id,
         'user_role': user_role,
@@ -72,9 +72,9 @@ def generate_token(user_id, user_role, school_id=None):
         'iat': datetime.utcnow()
     }
     
-    # Add school_id to payload if provided (for principals)
-    if school_id:
-        payload['school_id'] = school_id
+    # Add additional data to payload if provided
+    if additional_data:
+        payload.update(additional_data)
     
     return jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
 
@@ -84,35 +84,197 @@ def decode_token(token):
         payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
         return payload
     except jwt.ExpiredSignatureError:
-        return None  # Token expired
+        return None
     except jwt.InvalidTokenError:
-        return None  # Invalid token
+        return None
     except Exception as e:
         print(f"❌ Error decoding token: {e}")
         return None
 
-# ==================== PRINCIPAL LOGIN ====================
+# ==================== TEACHER LOGIN ====================
 
-# ==================== PRINCIPAL LOGIN ====================
-
-@login_bp.route('/auth/principal-login', methods=['POST', 'OPTIONS'])
-def principal_login():
-    """Handle principal login with MongoDB verification"""
-    # Handle preflight OPTIONS request
+@login_bp.route('/auth/teacher-login', methods=['POST', 'OPTIONS'])
+def teacher_login():
+    """Handle teacher login with MongoDB verification"""
     if request.method == 'OPTIONS':
-        print("🔄 Handling OPTIONS preflight request for principal-login")
+        print("🔄 Handling OPTIONS preflight request for teacher-login")
+        response = make_response()
+        return add_cors_headers(response)
+    
+    try:
+        print("=== TEACHER LOGIN DEBUG START ===")
+        
+        # Get the raw request data
+        raw_data = request.get_data(as_text=True)
+        print(f"📥 Raw request data: {raw_data}")
+        
+        data = request.get_json()
+        print(f"📥 Parsed JSON data: {data}")
+        
+        email = data.get('email', '').lower().strip() if data else ''
+        password = data.get('password', '').strip() if data else ''
+        
+        print(f"📧 Email received: {email}")
+        print(f"🔑 Password received: {password}")
+        
+        if not email or not password:
+            print("❌ Missing email or password")
+            response = jsonify({
+                'success': False,
+                'error': 'Email and password are required'
+            })
+            return add_cors_headers(response), 400
+        
+        if not validate_email(email):
+            print("❌ Invalid email format")
+            response = jsonify({
+                'success': False,
+                'error': 'Invalid email format'
+            })
+            return add_cors_headers(response), 400
+        
+        print("🔄 Attempting MongoDB connection...")
+        try:
+            client = get_mongo_client()
+            print("✅ MongoDB client created")
+            db = get_db()
+            print(f"✅ Database accessed: {DATABASE_NAME}")
+            collection = db.teachers
+            print(f"✅ Collection accessed: teachers")
+            
+            # Test if collection exists
+            collections = db.list_collection_names()
+            print(f"📋 Available collections: {collections}")
+            
+        except Exception as mongo_error:
+            print(f"❌ MongoDB connection error: {str(mongo_error)}")
+            response = jsonify({
+                'success': False,
+                'error': f'Database connection error: {str(mongo_error)}'
+            })
+            return add_cors_headers(response), 500
+        
+        print(f"🔍 Searching for teacher with email: {email}")
+        teacher = collection.find_one({'email': email})
+        
+        if not teacher:
+            print(f"❌ No teacher found for email: {email}")
+            client.close()
+            response = jsonify({
+                'success': False,
+                'error': 'No account found with these credentials'
+            })
+            return add_cors_headers(response), 404
+        
+        print(f"✅ Teacher found: {teacher.get('name', 'Unknown')}")
+        
+        # Check if teacher is active
+        is_active = teacher.get('is_active', True)
+        status = teacher.get('status', '')
+        print(f"📊 Teacher status - is_active: {is_active}, status: {status}")
+        
+        if not is_active and status != 'active':
+            print(f"❌ Teacher account not active")
+            client.close()
+            response = jsonify({
+                'success': False,
+                'error': 'Your account is not active. Please contact your school administrator.'
+            })
+            return add_cors_headers(response), 403
+        
+        stored_password = teacher.get('password', '')
+        print(f"🔐 Stored password (first 5 chars): {stored_password[:5] if stored_password else 'None'}")
+        print(f"🔐 Provided password (first 5 chars): {password[:5]}")
+        
+        if password != stored_password:
+            print(f"❌ Password mismatch")
+            client.close()
+            response = jsonify({
+                'success': False,
+                'error': 'Invalid credentials'
+            })
+            return add_cors_headers(response), 401
+        
+        print("✅ Password verified successfully")
+        
+        # Update last login
+        collection.update_one(
+            {'_id': teacher['_id']},
+            {'$set': {'last_login': datetime.utcnow()}}
+        )
+        print("✅ Last login updated")
+        
+        teacher_data = serialize_document(teacher)
+        client.close()
+        print("✅ MongoDB connection closed")
+        
+        # Generate token
+        token_additional_data = {
+            'school_id': teacher_data.get('school_id', ''),
+            'school_name': teacher_data.get('school_name', ''),
+            'employee_id': teacher_data.get('employee_id', ''),
+            'name': teacher_data.get('name', ''),
+        }
+        
+        token = generate_token(str(teacher['_id']), 'teacher', token_additional_data)
+        print("✅ JWT token generated")
+        
+        # Prepare response
+        response_data = {
+            'success': True,
+            'message': 'Teacher login successful',
+            'data': {
+                'teacher': {
+                    '_id': teacher_data['_id'],
+                    'email': teacher_data['email'],
+                    'name': teacher_data.get('name', ''),
+                    'employee_id': teacher_data.get('employee_id', ''),
+                },
+                'school': {
+                    'school_id': teacher_data.get('school_id', ''),
+                    'school_name': teacher_data.get('school_name', ''),
+                },
+                'token': token,
+                'expires_in': JWT_EXPIRATION_HOURS * 3600
+            }
+        }
+        
+        print(f"✅ Teacher login successful for: {teacher_data['email']}")
+        print("=== TEACHER LOGIN DEBUG END ===\n")
+        
+        response = jsonify(response_data)
+        return add_cors_headers(response), 200
+        
+    except Exception as e:
+        print(f" ERROR in teacher login: {str(e)}")
+        print(f" Error type: {type(e).__name__}")
+        import traceback
+        traceback.print_exc()
+        
+        response = jsonify({
+            'success': False,
+            'error': f'Login failed: {str(e)}',
+            'error_type': type(e).__name__
+        })
+        return add_cors_headers(response), 500
+
+# ==================== STUDENT LOGIN ====================
+
+@login_bp.route('/auth/student-login', methods=['POST', 'OPTIONS'])
+def student_login():
+    """Handle student login with MongoDB verification"""
+    if request.method == 'OPTIONS':
+        print("🔄 Handling OPTIONS preflight request for student-login")
         response = make_response()
         return add_cors_headers(response)
     
     try:
         data = request.get_json()
-        print(f"📥 Principal login attempt with data: {data}")
+        print(f"📥 Student login attempt with data: {data}")
         
         email = data.get('email', '').lower().strip()
         password = data.get('password', '').strip()
-        principal_code = data.get('principalCode', '').strip()
         
-        # Validate inputs
         if not email or not password:
             response = jsonify({
                 'success': False,
@@ -127,21 +289,14 @@ def principal_login():
             })
             return add_cors_headers(response), 400
         
-        # Connect to MongoDB
         client = get_mongo_client()
         db = get_db()
-        collection = db.school_contacts
+        collection = db.students
         
-        # Build query - check by email OR principal_code if provided
-        query = {'email': email}
-        if principal_code:
-            query = {'$or': [{'email': email}, {'principal_code': principal_code}]}
+        student = collection.find_one({'email': email})
         
-        # Find the school contact
-        school_contact = collection.find_one(query)
-        
-        if not school_contact:
-            print(f"❌ No school contact found for email: {email}")
+        if not student:
+            print(f"❌ No student found for email: {email}")
             client.close()
             response = jsonify({
                 'success': False,
@@ -149,46 +304,19 @@ def principal_login():
             })
             return add_cors_headers(response), 404
         
-        # Check if account is approved
-        if not school_contact.get('is_approved', False):
-            print(f"❌ Account not approved for email: {email}")
+        if not student.get('is_active', True) and student.get('status', '') != 'active':
+            print(f"❌ Student account not active for email: {email}")
             client.close()
             response = jsonify({
                 'success': False,
-                'error': 'Your account is pending approval. Please contact support.'
+                'error': 'Your account is not active. Please contact your school administrator.'
             })
             return add_cors_headers(response), 403
         
-        # Check if account is active
-        if not school_contact.get('is_active', False):
-            print(f"❌ Account not active for email: {email}")
-            client.close()
-            response = jsonify({
-                'success': False,
-                'error': 'Your account is not active. Please contact support.'
-            })
-            return add_cors_headers(response), 403
+        stored_password = student.get('initial_password', '')
         
-        # Check password
-        stored_password = school_contact.get('initial_password_plain', '')
-        stored_hashed_password = school_contact.get('hashed_password', '')
-        
-        # Check password (support both plain text for demo and hashed for production)
-        password_valid = False
-        
-        if stored_hashed_password:
-            # Check hashed password (production)
-            password_valid = check_password(password, stored_hashed_password)
-        elif stored_password:
-            # Check plain text password (demo)
-            password_valid = (password == stored_password)
-        else:
-            # No password stored (should not happen)
-            print(f"❌ No password stored for email: {email}")
-            password_valid = False
-        
-        if not password_valid:
-            print(f"❌ Password mismatch for email: {email}")
+        if password != stored_password:
+            print(f"❌ Password mismatch for student email: {email}")
             client.close()
             response = jsonify({
                 'success': False,
@@ -196,76 +324,115 @@ def principal_login():
             })
             return add_cors_headers(response), 401
         
-        # Password is valid - update last login
         collection.update_one(
-            {'_id': school_contact['_id']},
+            {'_id': student['_id']},
             {'$set': {'last_login': datetime.utcnow()}}
         )
         
-        # Serialize the document
-        principal = serialize_document(school_contact)
+        student_data = serialize_document(student)
         client.close()
         
-        # ======== FIXED: GET SCHOOL_ID FROM DATABASE ========
-        # Get the school_id - you need to determine where it's stored
-        # Assuming it might be in these fields:
-        school_id = principal.get('school_id', '')
+        # CRITICAL: Get school_id from student document
+        school_id = student_data.get('school_id', '')
         if not school_id:
-            # Try alternative field names
-            school_id = principal.get('school_code', '')
-        if not school_id:
-            # Generate from school name if needed
-            school_name = principal.get('school_name', '')
-            if school_name:
-                # Create a simple ID from school name
-                school_id = ''.join(word[:3].upper() for word in school_name.split()[:2])
+            # Try to get it from other fields
+            school_id = student_data.get('school_code', '')
         
-        print(f"🔑 Extracted school_id: {school_id}")
+        print(f"🔑 Student school_id: {school_id}")
+        print(f"🔑 Student class: {student_data.get('class', '')}")
         
-        # ======== FIXED: Generate token WITH school_id ========
-        token = generate_token(
-            str(school_contact['_id']), 
-            'principal',
-            school_id  # Pass school_id here
-        )
+        # Prepare additional data for token - MUST include school_id and class
+        token_additional_data = {
+            'school_id': school_id,  # This is REQUIRED!
+            'school_name': student_data.get('school_name', ''),
+            'student_id': student_data.get('student_id', ''),
+            'name': student_data.get('name', ''),
+            'roll_number': student_data.get('roll_number', ''),
+            'class': student_data.get('class', ''),  # This is REQUIRED for quizzes filtering!
+            'section': student_data.get('section', ''),
+            'phone': student_data.get('phone', ''),
+            'date_of_birth': student_data.get('date_of_birth', ''),
+            'gender': student_data.get('gender', ''),
+            'address': student_data.get('address', ''),
+            'parent_name': student_data.get('parent_name', ''),
+            'parent_phone': student_data.get('parent_phone', ''),
+            'parent_email': student_data.get('parent_email', ''),
+            'parent_occupation': student_data.get('parent_occupation', ''),
+            'blood_group': student_data.get('blood_group', ''),
+            'medical_conditions': student_data.get('medical_conditions', ''),
+            'admission_date': student_data.get('admission_date', ''),
+            'attendance': student_data.get('attendance', 0),
+            'performance': student_data.get('performance', 0),
+            'status': student_data.get('status', '')
+        }
         
-        # Prepare response data
+        # Generate token with additional data
+        token = generate_token(str(student['_id']), 'student', token_additional_data)
+        
+        # Debug: Decode token to verify it contains school_id
+        try:
+            decoded = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
+            print(f"✅ Generated token contains school_id: {decoded.get('school_id')}")
+            print(f"✅ Generated token contains class: {decoded.get('class')}")
+        except:
+            print("⚠️ Could not decode generated token")
+        
+        # Prepare comprehensive response data
         response_data = {
             'success': True,
-            'message': 'Login successful',
+            'message': 'Student login successful',
             'data': {
-                'principal': {
-                    '_id': principal['_id'],
-                    'email': principal['email'],
-                    'principal_name': principal['principal_name'],
-                    'school_name': principal['school_name'],
-                    'principal_code': principal.get('principal_code', ''),
-                    'school_id': school_id  # Include in response
+                'student': {
+                    '_id': student_data['_id'],
+                    'email': student_data['email'],
+                    'name': student_data.get('name', ''),
+                    'student_id': student_data.get('student_id', ''),
+                    'roll_number': student_data.get('roll_number', ''),
+                    'class': student_data.get('class', ''),
+                    'section': student_data.get('section', ''),
+                    'school_id': school_id,  # Include in response too
+                    'school_name': student_data.get('school_name', ''),
+                    'phone': student_data.get('phone', ''),
+                    'date_of_birth': student_data.get('date_of_birth', ''),
+                    'gender': student_data.get('gender', ''),
+                    'address': student_data.get('address', ''),
+                    'parent_name': student_data.get('parent_name', ''),
+                    'parent_phone': student_data.get('parent_phone', ''),
+                    'parent_email': student_data.get('parent_email', ''),
+                    'parent_occupation': student_data.get('parent_occupation', ''),
+                    'blood_group': student_data.get('blood_group', ''),
+                    'medical_conditions': student_data.get('medical_conditions', ''),
+                    'admission_date': student_data.get('admission_date', ''),
+                    'attendance': student_data.get('attendance', 0),
+                    'performance': student_data.get('performance', 0),
+                    'status': student_data.get('status', ''),
+                    'created_by': student_data.get('created_by', ''),
+                    'created_at': student_data.get('created_at', ''),
+                    'updated_at': student_data.get('updated_at', ''),
+                    'last_login': student_data.get('last_login', '')
                 },
                 'school': {
-                    'school_id': school_id,  # Include school_id here too
-                    'school_name': principal['school_name'],
-                    'school_type': principal['school_type'],
-                    'student_count': principal.get('student_count', ''),
-                    'address': principal.get('address', ''),
-                    'city': principal.get('city', ''),
-                    'state': principal.get('state', ''),
-                    'country': principal.get('country', ''),
-                    'is_approved': principal['is_approved'],
-                    'is_active': principal['is_active'],
-                    'accepted_plan': principal.get('accepted_plan', 'basic')
+                    'school_id': school_id,
+                    'school_name': student_data.get('school_name', ''),
+                    'school_code': student_data.get('school_code', '')
+                },
+                'academic': {
+                    'current_class': student_data.get('class', ''),
+                    'section': student_data.get('section', ''),
+                    'academic_year': datetime.now().year
                 },
                 'token': token,
-                'expires_in': JWT_EXPIRATION_HOURS * 3600  # seconds
+                'expires_in': JWT_EXPIRATION_HOURS * 3600
             }
         }
         
-        print(f"✅ Principal login successful for: {principal['email']}, school_id: {school_id}")
+        print(f"✅ Student login successful for: {student_data['email']}")
+        print(f"✅ Token generated with school_id: {school_id}")
         response = jsonify(response_data)
         return add_cors_headers(response), 200
         
     except Exception as e:
-        print(f"❌ Error in principal login: {str(e)}")
+        print(f"❌ Error in student login: {str(e)}")
         import traceback
         traceback.print_exc()
         response = jsonify({
@@ -278,7 +445,6 @@ def principal_login():
 @login_bp.route('/auth/superadmin-login', methods=['POST', 'OPTIONS'])
 def superadmin_login():
     """Handle super admin login"""
-    # Handle preflight OPTIONS request
     if request.method == 'OPTIONS':
         print("🔄 Handling OPTIONS preflight request for superadmin-login")
         response = make_response()
@@ -290,8 +456,8 @@ def superadmin_login():
         
         email = data.get('email', '').lower().strip()
         password = data.get('password', '').strip()
+        # Remove: superadmin_code = data.get('superadminCode', '').strip()
         
-        # Validate inputs
         if not email or not password:
             response = jsonify({
                 'success': False,
@@ -299,16 +465,16 @@ def superadmin_login():
             })
             return add_cors_headers(response), 400
         
-        # Hardcoded super admin credentials (store in database in production)
         SUPER_ADMINS = {
             'admin@gmail.com': {
-                'password': 'admin',  # Plain text for demo - hash in production
+                'password': 'admin',
                 'name': 'System Administrator',
-                'superadmin_code': 'SUPER001'
+                'superadmin_code': 'SUPER001',
+                'role': 'superadmin',
+                'permissions': ['*']
             }
         }
         
-        # Check if email exists in super admins
         if email not in SUPER_ADMINS:
             print(f"❌ No super admin found for email: {email}")
             response = jsonify({
@@ -319,8 +485,16 @@ def superadmin_login():
         
         admin_info = SUPER_ADMINS[email]
         
-        # Check password
-        if password != admin_info['password']:  # In production, use password hashing
+        # REMOVE superadmin code check since frontend won't send it
+        # if superadmin_code and superadmin_code != admin_info['superadmin_code']:
+        #     print(f"❌ Super admin code mismatch for: {email}")
+        #     response = jsonify({
+        #         'success': False,
+        #         'error': 'Invalid super admin code'
+        #     })
+        #     return add_cors_headers(response), 401
+        
+        if password != admin_info['password']:
             print(f"❌ Password mismatch for super admin: {email}")
             response = jsonify({
                 'success': False,
@@ -328,10 +502,17 @@ def superadmin_login():
             })
             return add_cors_headers(response), 401
         
-        # Generate JWT token
-        token = generate_token(f"superadmin_{email}", 'superadmin')
+        # Prepare additional data for token
+        token_additional_data = {
+            'name': admin_info['name'],
+            'superadmin_code': admin_info['superadmin_code'],
+            'permissions': admin_info['permissions']
+        }
         
-        # Prepare response data
+        # Generate token with additional data
+        token = generate_token(f"superadmin_{email}", 'superadmin', token_additional_data)
+        
+        # Prepare comprehensive response data
         response_data = {
             'success': True,
             'message': 'Super admin login successful',
@@ -339,7 +520,9 @@ def superadmin_login():
                 'superadmin': {
                     'email': email,
                     'name': admin_info['name'],
-                    'superadmin_code': admin_info['superadmin_code']
+                    'superadmin_code': admin_info['superadmin_code'],
+                    'role': admin_info['role'],
+                    'permissions': admin_info['permissions']
                 },
                 'token': token,
                 'expires_in': JWT_EXPIRATION_HOURS * 3600
@@ -360,12 +543,178 @@ def superadmin_login():
         })
         return add_cors_headers(response), 500
 
+# ==================== PRINCIPAL LOGIN ====================
+
+@login_bp.route('/auth/principal-login', methods=['POST', 'OPTIONS'])
+def principal_login():
+    """Handle principal login with MongoDB verification"""
+    if request.method == 'OPTIONS':
+        print("🔄 Handling OPTIONS preflight request for principal-login")
+        response = make_response()
+        return add_cors_headers(response)
+    
+    try:
+        data = request.get_json()
+        print(f"📥 Principal login attempt with data: {data}")
+        
+        email = data.get('email', '').lower().strip()
+        password = data.get('password', '').strip()
+        # Remove: principal_code = data.get('principalCode', '').strip()
+        
+        if not email or not password:
+            response = jsonify({
+                'success': False,
+                'error': 'Email and password are required'
+            })
+            return add_cors_headers(response), 400
+        
+        if not validate_email(email):
+            response = jsonify({
+                'success': False,
+                'error': 'Invalid email format'
+            })
+            return add_cors_headers(response), 400
+        
+        client = get_mongo_client()
+        db = get_db()
+        collection = db.school_contacts
+        
+        # SIMPLIFY query - only use email
+        query = {'email': email}
+        # Remove: if principal_code: query = {'$or': [{'email': email}, {'principal_code': principal_code}]}
+        
+        school_contact = collection.find_one(query)
+        
+        if not school_contact:
+            print(f"❌ No school contact found for email: {email}")
+            client.close()
+            response = jsonify({
+                'success': False,
+                'error': 'No account found with these credentials'
+            })
+            return add_cors_headers(response), 404
+        
+        if not school_contact.get('is_approved', False):
+            print(f"❌ Account not approved for email: {email}")
+            client.close()
+            response = jsonify({
+                'success': False,
+                'error': 'Your account is pending approval. Please contact support.'
+            })
+            return add_cors_headers(response), 403
+        
+        if not school_contact.get('is_active', False):
+            print(f"❌ Account not active for email: {email}")
+            client.close()
+            response = jsonify({
+                'success': False,
+                'error': 'Your account is not active. Please contact support.'
+            })
+            return add_cors_headers(response), 403
+        
+        stored_password = school_contact.get('initial_password_plain', '')
+        stored_hashed_password = school_contact.get('hashed_password', '')
+        
+        password_valid = False
+        
+        if stored_hashed_password:
+            password_valid = check_password(password, stored_hashed_password)
+        elif stored_password:
+            password_valid = (password == stored_password)
+        else:
+            password_valid = False
+        
+        if not password_valid:
+            print(f"❌ Password mismatch for email: {email}")
+            client.close()
+            response = jsonify({
+                'success': False,
+                'error': 'Invalid credentials'
+            })
+            return add_cors_headers(response), 401
+        
+        collection.update_one(
+            {'_id': school_contact['_id']},
+            {'$set': {'last_login': datetime.utcnow()}}
+        )
+        
+        principal = serialize_document(school_contact)
+        client.close()
+        
+        school_id = principal.get('school_id', '')
+        if not school_id:
+            school_id = principal.get('school_code', '')
+        if not school_id and principal.get('school_name', ''):
+            school_name = principal['school_name']
+            school_id = ''.join(word[:3].upper() for word in school_name.split()[:2])
+        
+        # Prepare additional data for token
+        token_additional_data = {
+            'school_id': school_id,
+            'school_name': principal.get('school_name', ''),
+            'principal_name': principal.get('principal_name', ''),
+            'principal_code': principal.get('principal_code', ''),
+            'school_type': principal.get('school_type', ''),
+            'student_count': principal.get('student_count', ''),
+            'address': principal.get('address', ''),
+            'city': principal.get('city', ''),
+            'state': principal.get('state', ''),
+            'country': principal.get('country', ''),
+            'accepted_plan': principal.get('accepted_plan', 'basic')
+        }
+        
+        # Generate token with additional data
+        token = generate_token(str(school_contact['_id']), 'principal', token_additional_data)
+        
+        response_data = {
+            'success': True,
+            'message': 'Login successful',
+            'data': {
+                'principal': {
+                    '_id': principal['_id'],
+                    'email': principal['email'],
+                    'principal_name': principal['principal_name'],
+                    'school_name': principal['school_name'],
+                    'principal_code': principal.get('principal_code', ''),
+                    'school_id': school_id
+                },
+                'school': {
+                    'school_id': school_id,
+                    'school_name': principal['school_name'],
+                    'school_type': principal['school_type'],
+                    'student_count': principal.get('student_count', ''),
+                    'address': principal.get('address', ''),
+                    'city': principal.get('city', ''),
+                    'state': principal.get('state', ''),
+                    'country': principal.get('country', ''),
+                    'is_approved': principal['is_approved'],
+                    'is_active': principal['is_active'],
+                    'accepted_plan': principal.get('accepted_plan', 'basic')
+                },
+                'token': token,
+                'expires_in': JWT_EXPIRATION_HOURS * 3600
+            }
+        }
+        
+        print(f"✅ Principal login successful for: {principal['email']}, school_id: {school_id}")
+        response = jsonify(response_data)
+        return add_cors_headers(response), 200
+        
+    except Exception as e:
+        print(f"❌ Error in principal login: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        response = jsonify({
+            'success': False,
+            'error': f'Login failed: {str(e)}'
+        })
+        return add_cors_headers(response), 500
+
 # ==================== TOKEN VERIFICATION ====================
 
 @login_bp.route('/auth/verify-token', methods=['POST', 'OPTIONS'])
 def verify_token():
     """Verify JWT token"""
-    # Handle preflight OPTIONS request
     if request.method == 'OPTIONS':
         print("🔄 Handling OPTIONS preflight request for verify-token")
         response = make_response()
@@ -382,7 +731,6 @@ def verify_token():
             })
             return add_cors_headers(response), 400
         
-        # Decode token
         payload = decode_token(token)
         
         if not payload:
@@ -392,14 +740,14 @@ def verify_token():
             })
             return add_cors_headers(response), 401
         
-        # Token is valid
         response_data = {
             'success': True,
             'message': 'Token is valid',
             'data': {
                 'user_id': payload.get('user_id'),
                 'user_role': payload.get('user_role'),
-                'expires_at': payload.get('exp')
+                'expires_at': payload.get('exp'),
+                'additional_data': {k: v for k, v in payload.items() if k not in ['user_id', 'user_role', 'exp', 'iat']}
             }
         }
         
@@ -419,18 +767,12 @@ def verify_token():
 @login_bp.route('/auth/logout', methods=['POST', 'OPTIONS'])
 def logout():
     """Handle logout (invalidate token on client side)"""
-    # Handle preflight OPTIONS request
     if request.method == 'OPTIONS':
         print("🔄 Handling OPTIONS preflight request for logout")
         response = make_response()
         return add_cors_headers(response)
     
     try:
-        # In a production system, you might want to:
-        # 1. Add token to blacklist
-        # 2. Store blacklist in Redis or database
-        # 3. Check blacklist on each request
-        
         response_data = {
             'success': True,
             'message': 'Logout successful'
@@ -453,7 +795,6 @@ def logout():
 @login_bp.route('/auth/change-password', methods=['POST', 'OPTIONS'])
 def change_password():
     """Change password for principals"""
-    # Handle preflight OPTIONS request
     if request.method == 'OPTIONS':
         print("🔄 Handling OPTIONS preflight request for change-password")
         response = make_response()
@@ -465,7 +806,6 @@ def change_password():
         current_password = data.get('current_password', '').strip()
         new_password = data.get('new_password', '').strip()
         
-        # Validate inputs
         if not token or not current_password or not new_password:
             response = jsonify({
                 'success': False,
@@ -480,7 +820,6 @@ def change_password():
             })
             return add_cors_headers(response), 400
         
-        # Verify token
         payload = decode_token(token)
         if not payload or payload.get('user_role') != 'principal':
             response = jsonify({
@@ -491,12 +830,10 @@ def change_password():
         
         user_id = payload.get('user_id')
         
-        # Connect to MongoDB
         client = get_mongo_client()
         db = get_db()
         collection = db.school_contacts
         
-        # Find the principal
         principal = collection.find_one({'_id': ObjectId(user_id)})
         
         if not principal:
@@ -507,7 +844,6 @@ def change_password():
             })
             return add_cors_headers(response), 404
         
-        # Check current password
         stored_password = principal.get('initial_password', '')
         stored_hashed_password = principal.get('hashed_password', '')
         
@@ -526,10 +862,8 @@ def change_password():
             })
             return add_cors_headers(response), 401
         
-        # Hash new password
         new_hashed_password = hash_password(new_password)
         
-        # Update password in database
         collection.update_one(
             {'_id': ObjectId(user_id)},
             {'$set': {
@@ -554,266 +888,5 @@ def change_password():
         response = jsonify({
             'success': False,
             'error': f'Failed to change password: {str(e)}'
-        })
-        return add_cors_headers(response), 500
-# ==================== TEACHER LOGIN ====================
-
-@login_bp.route('/auth/teacher-login', methods=['POST', 'OPTIONS'])
-def teacher_login():
-    """Handle teacher login with MongoDB verification"""
-    # Handle preflight OPTIONS request
-    if request.method == 'OPTIONS':
-        print("🔄 Handling OPTIONS preflight request for teacher-login")
-        response = make_response()
-        return add_cors_headers(response)
-    
-    try:
-        data = request.get_json()
-        print(f"📥 Teacher login attempt with data: {data}")
-        
-        email = data.get('email', '').lower().strip()
-        password = data.get('password', '').strip()
-        
-        # Validate inputs
-        if not email or not password:
-            response = jsonify({
-                'success': False,
-                'error': 'Email and password are required'
-            })
-            return add_cors_headers(response), 400
-        
-        if not validate_email(email):
-            response = jsonify({
-                'success': False,
-                'error': 'Invalid email format'
-            })
-            return add_cors_headers(response), 400
-        
-        # Connect to MongoDB
-        client = get_mongo_client()
-        db = get_db()
-        collection = db.teachers  # Assuming 'teachers' collection
-        
-        # Find the teacher by email only
-        teacher = collection.find_one({'email': email})
-        
-        if not teacher:
-            print(f"❌ No teacher found for email: {email}")
-            client.close()
-            response = jsonify({
-                'success': False,
-                'error': 'No account found with these credentials'
-            })
-            return add_cors_headers(response), 404
-        
-        # Check if teacher account is active
-        if not teacher.get('is_active', True):
-            print(f"❌ Teacher account not active for email: {email}")
-            client.close()
-            response = jsonify({
-                'success': False,
-                'error': 'Your account is not active. Please contact your school administrator.'
-            })
-            return add_cors_headers(response), 403
-        
-        # Check password - DIRECT COMPARISON (no hashing)
-        stored_password = teacher.get('password', '')
-        
-        # Simple direct string comparison
-        if password != stored_password:
-            print(f"❌ Password mismatch for teacher email: {email}")
-            print(f"Input password: {password}")
-            print(f"Stored password: {stored_password}")
-            client.close()
-            response = jsonify({
-                'success': False,
-                'error': 'Invalid credentials'
-            })
-            return add_cors_headers(response), 401
-        
-        # Password is valid - update last login
-        collection.update_one(
-            {'_id': teacher['_id']},
-            {'$set': {'last_login': datetime.utcnow()}}
-        )
-        
-        # Serialize the document
-        teacher_data = serialize_document(teacher)
-        client.close()
-        
-        # Generate JWT token
-        token = generate_token(str(teacher['_id']), 'teacher')
-        
-        # Prepare response data
-        response_data = {
-            'success': True,
-            'message': 'Teacher login successful',
-            'data': {
-                'teacher': {
-                    '_id': teacher_data['_id'],
-                    'email': teacher_data['email'],
-                    'name': teacher_data.get('teacher_name', teacher_data.get('name', '')),
-                    'teacher_code': teacher_data.get('teacher_code', ''),
-                    'subject': teacher_data.get('subject', ''),
-                    'qualification': teacher_data.get('qualification', ''),
-                    'experience': teacher_data.get('experience', ''),
-                    'classes_assigned': teacher_data.get('classes_assigned', []),
-                    'subjects_taught': teacher_data.get('subjects_taught', [])
-                },
-                'school': {
-                    'school_id': teacher_data.get('school_id', ''),
-                    'school_name': teacher_data.get('school_name', ''),
-                    'school_code': teacher_data.get('school_code', '')
-                },
-                'token': token,
-                'expires_in': JWT_EXPIRATION_HOURS * 3600  # seconds
-            }
-        }
-        
-        print(f"✅ Teacher login successful for: {teacher_data['email']}")
-        response = jsonify(response_data)
-        return add_cors_headers(response), 200
-        
-    except Exception as e:
-        print(f"❌ Error in teacher login: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        response = jsonify({
-            'success': False,
-            'error': f'Login failed: {str(e)}'
-        })
-        return add_cors_headers(response), 500
-# ==================== STUDENT LOGIN ====================
-
-@login_bp.route('/auth/student-login', methods=['POST', 'OPTIONS'])
-def student_login():
-    """Handle student login with MongoDB verification"""
-    # Handle preflight OPTIONS request
-    if request.method == 'OPTIONS':
-        print("🔄 Handling OPTIONS preflight request for student-login")
-        response = make_response()
-        return add_cors_headers(response)
-    
-    try:
-        data = request.get_json()
-        print(f"📥 Student login attempt with data: {data}")
-        
-        email = data.get('email', '').lower().strip()
-        password = data.get('password', '').strip()
-        
-        # Validate inputs
-        if not email or not password:
-            response = jsonify({
-                'success': False,
-                'error': 'Email and password are required'
-            })
-            return add_cors_headers(response), 400
-        
-        if not validate_email(email):
-            response = jsonify({
-                'success': False,
-                'error': 'Invalid email format'
-            })
-            return add_cors_headers(response), 400
-        
-        # Connect to MongoDB
-        client = get_mongo_client()
-        db = get_db()
-        collection = db.students  # Assuming 'students' collection
-        
-        # Find the student by email only
-        student = collection.find_one({'email': email})
-        
-        if not student:
-            print(f"❌ No student found for email: {email}")
-            client.close()
-            response = jsonify({
-                'success': False,
-                'error': 'No account found with these credentials'
-            })
-            return add_cors_headers(response), 404
-        
-        # Check if student account is active
-        if not student.get('is_active', True):
-            print(f"❌ Student account not active for email: {email}")
-            client.close()
-            response = jsonify({
-                'success': False,
-                'error': 'Your account is not active. Please contact your school administrator.'
-            })
-            return add_cors_headers(response), 403
-        
-        # Check password - DIRECT COMPARISON (no hashing)
-        stored_password =student.get('initial_password', '')
-        
-        # Simple direct string comparison
-        if password != stored_password:
-            print(f"❌ Password mismatch for student email: {email}")
-            print(f"Input password: {password}")
-            print(f"Stored password: {stored_password}")
-            client.close()
-            response = jsonify({
-                'success': False,
-                'error': 'Invalid credentials'
-            })
-            return add_cors_headers(response), 401
-          
-        # Password is valid - update last login
-        collection.update_one(
-            {'_id': student['_id']},
-            {'$set': {'last_login': datetime.utcnow()}}
-        )
-        
-        # Serialize the document
-        student_data = serialize_document(student)
-        client.close()
-        
-        # Generate JWT token
-        token = generate_token(str(student['_id']), 'student')
-        
-        # Prepare response data
-        response_data = {
-            'success': True,
-            'message': 'Student login successful',
-            'data': {
-                'student': {
-                    '_id': student_data['_id'],
-                    'email': student_data['email'],
-                    'name': student_data.get('student_name', student_data.get('name', '')),
-                    'student_id': student_data.get('student_id', ''),
-                    'roll_number': student_data.get('roll_number', ''),
-                    'class': student_data.get('class', ''),
-                    'section': student_data.get('section', ''),
-                    'date_of_birth': student_data.get('date_of_birth', ''),
-                    'gender': student_data.get('gender', ''),
-                    'parent_name': student_data.get('parent_name', ''),
-                    'parent_contact': student_data.get('parent_contact', '')
-                },
-                'school': {
-                    'school_id': student_data.get('school_id', ''),
-                    'school_name': student_data.get('school_name', ''),
-                    'school_code': student_data.get('school_code', '')
-                },
-                'academic': {
-                    'current_class': student_data.get('current_class', ''),
-                    'section': student_data.get('section', ''),
-                    'academic_year': student_data.get('academic_year', '')
-                },
-                'token': token,
-                'expires_in': JWT_EXPIRATION_HOURS * 3600  # seconds
-            }
-        }
-        
-        print(f"✅ Student login successful for: {student_data['email']}")
-        response = jsonify(response_data)
-        return add_cors_headers(response), 200
-        
-    except Exception as e:
-        print(f"❌ Error in student login: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        response = jsonify({
-            'success': False,
-            'error': f'Login failed: {str(e)}'
         })
         return add_cors_headers(response), 500
